@@ -1,6 +1,4 @@
-""" function for training and validation in one epoch
-    Yunli Qi
-"""
+
 
 import os
 import matplotlib.pyplot as plt

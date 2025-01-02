@@ -33,7 +33,7 @@ def train_sam(args, net: nn.Module, optimizer, train_loader, support_loader, epo
     net.train()
     optimizer.zero_grad()
 
-    GPUdevice = torch.device('cuda', args.device)
+    GPUdevice = args.device
     pos_weight = torch.ones([1]).cuda(device=GPUdevice) * 2
     criterion_G = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     mask_type = torch.float32
@@ -259,7 +259,7 @@ def validation_sam(args, val_loader, support_loader, epoch, net: nn.Module, clea
     # eval mode
     net.eval()
 
-    GPUdevice = torch.device('cuda', args.device)
+    GPUdevice = args.device
     pos_weight = torch.ones([1]).cuda(device=GPUdevice) * 2
     criterion_G = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     mask_type = torch.float32
