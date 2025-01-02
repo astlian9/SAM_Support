@@ -35,8 +35,8 @@ import cfg
 import pandas as pd
 
 
-args = cfg.parse_args()
-device = torch.device('cuda', args.gpu_device)
+# args = cfg.parse_args()
+# device = torch.device('cuda', args.gpu_device)
 
 
 

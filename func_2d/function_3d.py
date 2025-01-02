@@ -10,14 +10,14 @@ from conf import settings
 from func_2d.utils import *
 import pandas as pd
 
-args = cfg.parse_args()
-
-GPUdevice = torch.device('cuda', args.gpu_device)
-pos_weight = torch.ones([1]).cuda(device=GPUdevice) * 2
-criterion_G = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-mask_type = torch.float32
-
-torch.backends.cudnn.benchmark = True
+# args = cfg.parse_args()
+#
+# GPUdevice = torch.device('cuda', args.device)
+# pos_weight = torch.ones([1]).cuda(device=GPUdevice) * 2
+# criterion_G = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+# mask_type = torch.float32
+#
+# torch.backends.cudnn.benchmark = True
 
 
 def train_sam(args, net: nn.Module, optimizer, train_loader, support_loader, epoch):
@@ -32,6 +32,11 @@ def train_sam(args, net: nn.Module, optimizer, train_loader, support_loader, epo
     # train mode
     net.train()
     optimizer.zero_grad()
+
+    GPUdevice = torch.device('cuda', args.device)
+    pos_weight = torch.ones([1]).cuda(device=GPUdevice) * 2
+    criterion_G = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    mask_type = torch.float32
 
     # init
     epoch_loss = 0
@@ -254,9 +259,13 @@ def validation_sam(args, val_loader, support_loader, epoch, net: nn.Module, clea
     # eval mode
     net.eval()
 
+    GPUdevice = torch.device('cuda', args.device)
+    pos_weight = torch.ones([1]).cuda(device=GPUdevice) * 2
+    criterion_G = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    mask_type = torch.float32
+
     n_val = len(val_loader)
     threshold = (0.1, 0.3, 0.5, 0.7, 0.9)
-    GPUdevice = torch.device('cuda:' + str(args.gpu_device))
 
     # init
     lossfunc = criterion_G
