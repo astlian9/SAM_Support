@@ -33,11 +33,13 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 def process(args):
     rank = 0
 
-    if args.dist:
+    if args.disted:
         dist.init_process_group(backend="nccl", init_method="env://")
-        rank = args.local_rank
+        print(os.environ['LOCAL_RANK'])
+        rank = os.environ['LOCAL_RANK']
     args.device = torch.device(f"cuda:{rank}")
     torch.cuda.set_device(args.device)
+    GPUdevice = args.device
 
     # load network
     net = get_network(args, args.net, use_gpu=args.gpu, gpu_device=GPUdevice, distribution=args.distributed)
@@ -113,7 +115,7 @@ def process(args):
         # training
         net.train()
         time_start = time.time()
-        loss = function.train_sam(args, net, optimizer, nice_train_loader, nice_support_loader, epoch, writer)
+        loss = function.train_sam(args, net, optimizer, nice_train_loader, nice_support_loader, epoch)
         logger.info(f'GPU id: {rank} Train loss: {loss} || @ epoch {epoch}.')
         time_end = time.time()
         print('time_for_training ', time_end - time_start)
@@ -122,7 +124,7 @@ def process(args):
         if epoch % args.val_freq == 0 or epoch == settings.EPOCH - 1:
             net.eval()
 
-            tol, (eiou, edice) = function.validation_sam(args, nice_val_loader, nice_support_loader, epoch, net, writer)
+            tol, (eiou, edice) = function.validation_sam(args, nice_val_loader, nice_support_loader, epoch, net)
             logger.info(f'GPU id: {rank} Val score: {tol}, IOU: {eiou}, DICE: {edice} || @ epoch {epoch}.')
 
             if args.distributed != 'none':
