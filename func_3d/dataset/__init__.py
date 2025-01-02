@@ -4,7 +4,9 @@ from .pet_tumor import PETCT
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import SubsetRandomSampler
+from torch.utils.data.distributed import DistributedSampler
 import numpy as np
+import torch
 
 
 
@@ -61,6 +63,29 @@ def get_dataloader(args):
         train_sampler = SubsetRandomSampler(indices[split_support:])
         support_sampler = SubsetRandomSampler(indices[:split_support])
         val_sampler = SubsetRandomSampler(indices_test[split_val:])
+        test_sampler = SubsetRandomSampler(indices_test[:split_val])
+        nice_support_loader = DataLoader(petct_train_dataset, batch_size=1, sampler=support_sampler, num_workers=8, pin_memory=False)
+        nice_train_loader = DataLoader(petct_train_dataset, batch_size=args.b, sampler=train_sampler, num_workers=8, pin_memory=False)
+        nice_test_loader = DataLoader(petct_test_dataset, batch_size=args.b, sampler=test_sampler, num_workers=8, pin_memory=False)
+        nice_val_loader = DataLoader(petct_test_dataset, batch_size=args.b, sampler=val_sampler, num_workers=8,
+                                     pin_memory=False)
+    elif args.dataset == 'petct_distributed':
+        petct_train_dataset = PETCT(args, args.data_path, transform=None, transform_msk=None, mode='Training',
+                                  prompt=args.prompt)
+        petct_test_dataset = PETCT(args, args.data_path, transform=None, transform_msk=None, mode='Testing',
+                                 prompt=args.prompt)
+        dataset_size = len(petct_train_dataset)
+        indices = list(range(dataset_size)) # train indice
+        split_support = 1 # support size
+        test_dataset_size = len(petct_test_dataset)
+        indices_test = list(range(test_dataset_size))
+        split_val = int(np.floor(0.5*test_dataset_size))
+        np.random.shuffle(indices)
+        np.random.shuffle(indices_test)
+        train_sampler = DistributedSampler(torch.utils.data.Subset(petct_train_dataset, indices[split_support:]))
+        support_sampler = SubsetRandomSampler(indices[:split_support])
+        val_sampler = DistributedSampler(torch.utils.data.Subset(petct_test_dataset, indices[split_val:]))
+        #test_sampler = DistributedSampler(torch.utils.data.Subset(petct_test_dataset, indices[:split_val]))
         test_sampler = SubsetRandomSampler(indices_test[:split_val])
         nice_support_loader = DataLoader(petct_train_dataset, batch_size=1, sampler=support_sampler, num_workers=8, pin_memory=False)
         nice_train_loader = DataLoader(petct_train_dataset, batch_size=args.b, sampler=train_sampler, num_workers=8, pin_memory=False)
