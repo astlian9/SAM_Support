@@ -100,7 +100,7 @@ def main():
         # training
         net.train()
         time_start = time.time()
-        loss = function.train_sam(args, net, optimizer, nice_train_loader, nice_support_loader, epoch, writer)
+        loss = function.train_sam(args, net, optimizer, nice_train_loader, nice_support_loader, epoch)
         logger.info(f'Train loss: {loss} || @ epoch {epoch}.')
         time_end = time.time()
         print('time_for_training ', time_end - time_start)

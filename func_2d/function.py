@@ -41,7 +41,9 @@ def train_sam(args, net: nn.Module, optimizer, train_loader, support_loader, epo
     epoch_loss = 0
     memory_bank_list = []
     lossfunc = criterion_G
-    feat_sizes = [(256, 256), (128, 128), (64, 64)]
+    highres_size = args.image_size // 4
+    feat_sizes = [(highres_size // (2 ** k), highres_size // (2 ** k)) for k in range(3)]
+    # feat_sizes = [(256, 256), (128, 128), (64, 64)]
 
 
     with tqdm(total=len(train_loader), desc=f'Epoch {epoch}', unit='img') as pbar:
@@ -277,7 +279,9 @@ def validation_sam(args, val_loader, support_loader, epoch, net: nn.Module, clea
     # init
     lossfunc = criterion_G
     memory_bank_list = []
-    feat_sizes = [(256, 256), (128, 128), (64, 64)]
+    highres_size = args.image_size // 4
+    feat_sizes = [(highres_size // (2 ** k), highres_size // (2 ** k)) for k in range(3)]
+    # feat_sizes = [(256, 256), (128, 128), (64, 64)]
     total_loss = 0
     total_eiou = 0
     total_dice = 0
