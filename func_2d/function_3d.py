@@ -258,7 +258,7 @@ def validation_sam(args, val_loader, support_loader, epoch, net: nn.Module, clea
     # eval mode
     net.eval()
 
-    GPUdevice = args.device
+    GPUdevice = torch.device('cuda',args.gpu_device)
     pos_weight = torch.ones([1]).cuda(device=GPUdevice) * 2
     criterion_G = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     mask_type = torch.float32
@@ -455,5 +455,6 @@ def validation_sam(args, val_loader, support_loader, epoch, net: nn.Module, clea
 
             pbar.update()
 
+    n_val = n_val * args.video_length
     return total_loss / n_val, tuple([total_eiou / n_val, total_dice / n_val])
 

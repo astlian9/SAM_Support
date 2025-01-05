@@ -38,6 +38,7 @@ def process(args):
         print(os.environ['LOCAL_RANK'])
         rank = os.environ['LOCAL_RANK']
     args.device = torch.device(f"cuda:{rank}")
+    args.gpu_device = rank
     torch.cuda.set_device(args.device)
     GPUdevice = args.device
 
