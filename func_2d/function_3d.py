@@ -17,7 +17,7 @@ import pandas as pd
 # criterion_G = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 mask_type = torch.float32
 #
-# torch.backends.cudnn.benchmark = True
+torch.backends.cudnn.benchmark = True
 
 
 def train_sam(args, net: nn.Module, optimizer, train_loader, support_loader, epoch):
