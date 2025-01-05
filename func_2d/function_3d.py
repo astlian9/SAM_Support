@@ -15,7 +15,7 @@ import pandas as pd
 # GPUdevice = torch.device('cuda', args.device)
 # pos_weight = torch.ones([1]).cuda(device=GPUdevice) * 2
 # criterion_G = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-mask_type = torch.float32
+# mask_type = torch.float32
 #
 torch.backends.cudnn.benchmark = True
 
@@ -33,9 +33,10 @@ def train_sam(args, net: nn.Module, optimizer, train_loader, support_loader, epo
     net.train()
     optimizer.zero_grad()
 
-    GPUdevice = args.device
+    GPUdevice = torch.device('cuda',args.gpu_device)
     pos_weight = torch.ones([1]).cuda(device=GPUdevice) * 2
     criterion_G = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    mask_type=torch.float32
 
     # init
     epoch_loss = 0
@@ -60,7 +61,6 @@ def train_sam(args, net: nn.Module, optimizer, train_loader, support_loader, epo
             support_masks = support_data['mask'][0].to(dtype=mask_type, device=GPUdevice)
             name = pack['image_meta_dict']['filename_or_obj']
             # print(imgs_input.shape, masks_input.shape, support_imgs.shape, support_masks.shape)
-            print(support_imgs.shape, imgs_input.shape, support_imgs.dtype)
             '''generate support embeddings'''
             support_backbone_out = net.sam.forward_image(support_imgs)
             _, support_vision_feats, support_vision_pos_embeds, _ = net.sam._prepare_backbone_features(
