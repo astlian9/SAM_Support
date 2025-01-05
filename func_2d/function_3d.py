@@ -275,6 +275,7 @@ def validation_sam(args, val_loader, support_loader, epoch, net: nn.Module, clea
     total_loss = 0
     total_eiou = 0
     total_dice = 0
+    flag = 0
 
     with tqdm(total=n_val, desc='Validation round', unit='batch', leave=False) as pbar:
         for ind, pack in enumerate(val_loader):
@@ -442,6 +443,7 @@ def validation_sam(args, val_loader, support_loader, epoch, net: nn.Module, clea
                     temp = eval_seg(pred, masks, threshold)
                     total_eiou += temp[0]
                     total_dice += temp[1]
+                    flag = flag + 1
 
                     '''vis images'''
                     if ind % args.vis == 0:
@@ -455,6 +457,7 @@ def validation_sam(args, val_loader, support_loader, epoch, net: nn.Module, clea
 
             pbar.update()
 
-    n_val = n_val * args.video_length
+    n_val = n_val * length_3d
+    print(length_3d, flag, n_val)
     return total_loss / n_val, tuple([total_eiou / n_val, total_dice / n_val])
 

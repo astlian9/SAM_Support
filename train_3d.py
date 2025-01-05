@@ -30,6 +30,7 @@ def main():
 
     args = cfg.parse_args()
     GPUdevice = torch.device('cuda', args.gpu_device)
+    torch.cuda.set_device(GPUdevice)
 
     net = get_network(args, args.net, use_gpu=args.gpu, gpu_device=GPUdevice, distribution=args.distributed)
     if args.pretrain:
@@ -37,7 +38,7 @@ def main():
         net.load_state_dict(weights, strict=False)
 
     net = LoRA_Sam(net, 16)
-    net.cuda()
+    net.to(device=GPUdevice)
     # optimisation
     optimizer = optim.Adam(net.parameters(), lr=args.lr, betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False)
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
