@@ -35,8 +35,8 @@ def process(args):
 
     if args.disted:
         dist.init_process_group(backend="nccl", init_method="env://")
-        print(os.environ['LOCAL_RANK'])
-        rank = os.environ['LOCAL_RANK']
+        # print(os.environ['LOCAL_RANK'])
+        rank = int(os.environ['LOCAL_RANK'])
     args.device = torch.device(f"cuda:{rank}")
     args.gpu_device = int(rank)
     torch.cuda.set_device(args.device)
@@ -120,12 +120,14 @@ def process(args):
         net.train()
         time_start = time.time()
         loss = function.train_sam(args, net, optimizer, nice_train_loader, nice_support_loader, epoch)
-        logger.info(f'GPU id: {rank} Train loss: {loss} || @ epoch {epoch}.')
+        if rank==0 :
+            logger.info(f'GPU id: {rank} Train loss: {loss} || @ epoch {epoch}.')
+        print(f'GPU id: {rank} Train loss: {loss} || @ epoch {epoch}.')
         time_end = time.time()
         print('time_for_training ', time_end - time_start)
 
         # validation
-        if (epoch % args.val_freq == 0 or epoch == settings.EPOCH - 1) & rank == 0:
+        if (epoch % args.val_freq == 0 or epoch == settings.EPOCH - 1) & (rank == 0):
             net.eval()
 
             tol, (eiou, edice) = function.validation_sam(args, nice_val_loader, nice_support_loader, epoch, net)
