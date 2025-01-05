@@ -26,6 +26,7 @@ def parse_args():
     parser.add_argument('-sam_ckpt', type=str, default=None , help='sam checkpoint address')
     parser.add_argument('-sam_config', type=str, default=None , help='sam checkpoint address')
     parser.add_argument('-video_length', type=int, default=8, help='sam checkpoint address')
+    parser.add_argument('-epoch', type=int, default=0, help='starting epoch')
     parser.add_argument('-b', type=int, default=1, help='batch size for dataloader')
     parser.add_argument('-lr', type=float, default=1e-3, help='initial learning rate')
     parser.add_argument('-weights', type=str, default = 0, help='the weights file you want to test')

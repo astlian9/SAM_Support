@@ -114,6 +114,9 @@ def process(args):
     for epoch in range(settings.EPOCH):
 
         # training
+        dist.barrier()
+        args.epoch = epoch
+        nice_train_loader, nice_test_loader, nice_support_loader, nice_val_loader = get_dataloader(args)
         net.train()
         time_start = time.time()
         loss = function.train_sam(args, net, optimizer, nice_train_loader, nice_support_loader, epoch)
@@ -122,7 +125,7 @@ def process(args):
         print('time_for_training ', time_end - time_start)
 
         # validation
-        if epoch % args.val_freq == 0 or epoch == settings.EPOCH - 1:
+        if (epoch % args.val_freq == 0 or epoch == settings.EPOCH - 1) & rank == 0:
             net.eval()
 
             tol, (eiou, edice) = function.validation_sam(args, nice_val_loader, nice_support_loader, epoch, net)

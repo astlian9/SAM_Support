@@ -83,6 +83,7 @@ def get_dataloader(args):
         np.random.shuffle(indices)
         np.random.shuffle(indices_test)
         train_sampler = DistributedSampler(torch.utils.data.Subset(petct_train_dataset, indices[split_support:]))
+        train_sampler.set_epoch(args.epoch)
         support_sampler = SubsetRandomSampler(indices[:split_support])
         val_sampler = DistributedSampler(torch.utils.data.Subset(petct_test_dataset, indices[split_val:]))
         #test_sampler = DistributedSampler(torch.utils.data.Subset(petct_test_dataset, indices[:split_val]))
