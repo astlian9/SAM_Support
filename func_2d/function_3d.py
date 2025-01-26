@@ -459,5 +459,5 @@ def validation_sam(args, val_loader, support_loader, epoch, net: nn.Module, clea
 
     n_val = n_val * length_3d
     print(length_3d, flag, n_val)
-    return total_loss / n_val, tuple([total_eiou / n_val, total_dice / n_val])
+    return total_loss / flag, tuple([total_eiou / flag, total_dice / flag])
 

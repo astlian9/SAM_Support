@@ -125,6 +125,7 @@ def process(args):
         print(f'GPU id: {rank} Train loss: {loss} || @ epoch {epoch}.')
         time_end = time.time()
         print('time_for_training ', time_end - time_start)
+        torch.cuda.empty_cache()
 
         # validation
         if (epoch % args.val_freq == 0 or epoch == settings.EPOCH - 1) & (rank == 0):
@@ -132,6 +133,7 @@ def process(args):
 
             tol, (eiou, edice) = function.validation_sam(args, nice_val_loader, nice_support_loader, epoch, net)
             logger.info(f'GPU id: {rank} Val score: {tol}, IOU: {eiou}, DICE: {edice} || @ epoch {epoch}.')
+            torch.cuda.empty_cache()
 
             if args.distributed != 'none':
                 sd = net.module.state_dict()
