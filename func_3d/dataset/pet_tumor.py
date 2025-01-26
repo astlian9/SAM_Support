@@ -83,9 +83,9 @@ class PETCT(Dataset):
         else:
             video_length = self.video_length
         if num_frame > video_length and self.mode == 'Training':
-            starting_frame = np.random.randint(0, num_frame - video_length + 1)
+            starting_frame = np.random.randint(0, num_frame - video_length + 1) + starting_frame_nonzero
         else:
-            starting_frame = 0
+            starting_frame = starting_frame_nonzero
 
         # img_tensor = torch.zeros(video_length, 2, self.img_size, self.img_size)
         img = torch.from_numpy(raw_data[0, :, :, starting_frame:starting_frame + video_length]).permute(2,0,1)
