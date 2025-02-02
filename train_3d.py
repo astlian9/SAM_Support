@@ -104,6 +104,7 @@ def main():
         loss = function.train_sam(args, net, optimizer, nice_train_loader, nice_support_loader, epoch)
         logger.info(f'Train loss: {loss} || @ epoch {epoch}.')
         time_end = time.time()
+        scheduler.step()
         print('time_for_training ', time_end - time_start)
 
         # validation

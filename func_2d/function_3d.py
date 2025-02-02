@@ -235,7 +235,7 @@ def train_sam(args, net: nn.Module, optimizer, train_loader, support_loader, epo
                     memory_bank_feats.append(maskmem_features_3d)
                     memory_bank_pos_enc.append(maskmem_pos_enc_3d)
 
-
+            loss = loss / length_3d
             loss.backward()
             optimizer.step()
 
