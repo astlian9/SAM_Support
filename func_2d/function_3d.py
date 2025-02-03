@@ -184,6 +184,11 @@ def train_sam(args, net: nn.Module, optimizer, train_loader, support_loader, epo
                     )
 
 
+                feats = [feat.cuda(non_blocking=True).permute(1, 2, 0).view(B, -1, *feat_size)
+                         for feat, feat_size in zip(vision_feats[::-1], feat_sizes[::-1])][::-1]
+                image_embed = feats[-1]
+                high_res_feats = feats[:-1]
+
                 '''train mask decoder'''
                 low_res_multimasks, iou_predictions, sam_output_tokens, object_score_logits = net.sam.sam_mask_decoder(
                     image_embeddings=image_embed,
