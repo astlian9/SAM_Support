@@ -97,7 +97,7 @@ def main():
     best_dice = 0.0
 
     for epoch in range(settings.EPOCH):
-
+        nice_train_loader, nice_test_loader, support_loader, val_loader = get_dataloader(args)
         # training
         net.train()
         time_start = time.time()
