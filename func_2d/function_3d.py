@@ -394,10 +394,38 @@ def validation_sam(args, val_loader, support_loader, epoch, net: nn.Module, clea
                         memory_pos=memory_pos_enc,
                         num_obj_ptr_tokens=0
                     )
+
+                    '''memory attention on past frames'''
+                    if len(memory_bank_feats) == 0:
+                        vision_feats[-1] = vision_feats[-1] + torch.nn.Parameter(
+                            torch.zeros(1, B, net.sam.hidden_dim)).to(
+                            device="cuda")
+                        vision_pos_embeds[-1] = vision_pos_embeds[-1] + torch.nn.Parameter(
+                            torch.zeros(1, B, net.sam.hidden_dim)).to(device="cuda")
+                    else:
+                        L = len(memory_bank_feats)
+                        memory_stack_ori = torch.stack(memory_bank_feats, dim=0)
+                        memory_pos_stack_ori = torch.stack(memory_bank_pos_enc, dim=0)
+                        memory = memory_stack_ori.flatten(3).permute(1, 2, 0, 3)
+                        # memory = memory.permute(2, 0, 1, 3).reshape(4096*L, B, 64)
+                        memory = memory.permute(2, 0, 1, 3).reshape(256 * L, B, 64)
+                        # memory_pos = memory_pos_stack_ori.view(L, B, 4096, 64)
+                        memory_pos = memory_pos_stack_ori.flatten(3).permute(1, 2, 0, 3)
+                        # memory_pos = memory_pos.permute(2, 0, 1, 3).reshape(4096*L, B, 64)
+                        memory_pos = memory_pos.permute(2, 0, 1, 3).reshape(256 * L, B, 64)
+                        vision_feats[-1] = net.sam.memory_attention(
+                            curr=[vision_feats[-1]],
+                            curr_pos=[vision_pos_embeds[-1]],
+                            memory=memory,
+                            memory_pos=memory_pos,
+                            num_obj_ptr_tokens=0
+                        )
+
                     feats = [feat.cuda(non_blocking=True).permute(1, 2, 0).view(B, -1, *feat_size)
                              for feat, feat_size in zip(vision_feats[::-1], feat_sizes[::-1])][::-1]
                     image_embed = feats[-1]
                     high_res_feats = feats[:-1]
+
                     with torch.no_grad():
                         '''infer from cross attentioned feats and zero prompts'''
                         se, de = net.sam.sam_prompt_encoder(
@@ -428,31 +456,36 @@ def validation_sam(args, val_loader, support_loader, epoch, net: nn.Module, clea
                     # se: torch.Size([batch, n+1, 256])
                     # de: torch.Size([batch, 256, 64, 64])
 
-                    '''memory attention on past frames'''
-                    if len(memory_bank_feats) == 0:
-                        vision_feats[-1] = vision_feats[-1] + torch.nn.Parameter(
-                            torch.zeros(1, B, net.sam.hidden_dim)).to(
-                            device="cuda")
-                        vision_pos_embeds[-1] = vision_pos_embeds[-1] + torch.nn.Parameter(
-                            torch.zeros(1, B, net.sam.hidden_dim)).to(device="cuda")
-                    else:
-                        L = len(memory_bank_feats)
-                        memory_stack_ori = torch.stack(memory_bank_feats, dim=0)
-                        memory_pos_stack_ori = torch.stack(memory_bank_pos_enc, dim=0)
-                        memory = memory_stack_ori.flatten(3).permute(1, 2, 0, 3)
-                        # memory = memory.permute(2, 0, 1, 3).reshape(4096*L, B, 64)
-                        memory = memory.permute(2, 0, 1, 3).reshape(256 * L, B, 64)
-                        # memory_pos = memory_pos_stack_ori.view(L, B, 4096, 64)
-                        memory_pos = memory_pos_stack_ori.flatten(3).permute(1, 2, 0, 3)
-                        # memory_pos = memory_pos.permute(2, 0, 1, 3).reshape(4096*L, B, 64)
-                        memory_pos = memory_pos.permute(2, 0, 1, 3).reshape(256 * L, B, 64)
-                        vision_feats[-1] = net.sam.memory_attention(
-                            curr=[vision_feats[-1]],
-                            curr_pos=[vision_pos_embeds[-1]],
-                            memory=memory,
-                            memory_pos=memory_pos,
-                            num_obj_ptr_tokens=0
-                        )
+                    # '''memory attention on past frames'''
+                    # if len(memory_bank_feats) == 0:
+                    #     vision_feats[-1] = vision_feats[-1] + torch.nn.Parameter(
+                    #         torch.zeros(1, B, net.sam.hidden_dim)).to(
+                    #         device="cuda")
+                    #     vision_pos_embeds[-1] = vision_pos_embeds[-1] + torch.nn.Parameter(
+                    #         torch.zeros(1, B, net.sam.hidden_dim)).to(device="cuda")
+                    # else:
+                    #     L = len(memory_bank_feats)
+                    #     memory_stack_ori = torch.stack(memory_bank_feats, dim=0)
+                    #     memory_pos_stack_ori = torch.stack(memory_bank_pos_enc, dim=0)
+                    #     memory = memory_stack_ori.flatten(3).permute(1, 2, 0, 3)
+                    #     # memory = memory.permute(2, 0, 1, 3).reshape(4096*L, B, 64)
+                    #     memory = memory.permute(2, 0, 1, 3).reshape(256 * L, B, 64)
+                    #     # memory_pos = memory_pos_stack_ori.view(L, B, 4096, 64)
+                    #     memory_pos = memory_pos_stack_ori.flatten(3).permute(1, 2, 0, 3)
+                    #     # memory_pos = memory_pos.permute(2, 0, 1, 3).reshape(4096*L, B, 64)
+                    #     memory_pos = memory_pos.permute(2, 0, 1, 3).reshape(256 * L, B, 64)
+                    #     vision_feats[-1] = net.sam.memory_attention(
+                    #         curr=[vision_feats[-1]],
+                    #         curr_pos=[vision_pos_embeds[-1]],
+                    #         memory=memory,
+                    #         memory_pos=memory_pos,
+                    #         num_obj_ptr_tokens=0
+                    #     )
+
+                    # feats = [feat.cuda(non_blocking=True).permute(1, 2, 0).view(B, -1, *feat_size)
+                    #          for feat, feat_size in zip(vision_feats[::-1], feat_sizes[::-1])][::-1]
+                    # image_embed = feats[-1]
+                    # high_res_feats = feats[:-1]
 
                     '''train mask decoder'''
                     low_res_multimasks, iou_predictions, sam_output_tokens, object_score_logits = net.sam.sam_mask_decoder(
