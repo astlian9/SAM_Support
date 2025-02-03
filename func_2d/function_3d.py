@@ -513,11 +513,11 @@ def validation_sam(args, val_loader, support_loader, epoch, net: nn.Module, clea
                     flag = flag + 1
 
                     '''vis images'''
-                    if ind % args.vis == 0:
+                    if (ind % args.vis == 0) & (i % args.vis == 0):
                         namecat = 'Test'
                         for na in name:
                             img_name = na
-                            namecat = namecat + img_name + '+'
+                            namecat = namecat + img_name + '+slice' + i 
                         vis_image(imgs, pred, masks,
                                 os.path.join(args.path_helper['sample_path'], namecat + 'epoch+' + str(epoch) + '.jpg'),
                                 reverse=False, points=None)
