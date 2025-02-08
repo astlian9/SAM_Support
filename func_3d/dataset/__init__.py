@@ -1,6 +1,7 @@
 from .btcv import BTCV
 from .amos import AMOS
 from .pet_tumor import PETCT
+from .acdc import ACDC
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import SubsetRandomSampler
@@ -93,6 +94,32 @@ def get_dataloader(args):
         nice_train_loader = DataLoader(petct_train_dataset, batch_size=args.b, sampler=train_sampler, num_workers=8, pin_memory=False)
         nice_test_loader = DataLoader(petct_test_dataset, batch_size=args.b, sampler=test_sampler, num_workers=8, pin_memory=False)
         nice_val_loader = DataLoader(petct_test_dataset, batch_size=args.b, sampler=val_sampler, num_workers=8,
+                                     pin_memory=False)
+
+    elif args.dataset == 'acdc':
+        acdc_train_dataset = ACDC(args, args.data_path, transform=None, transform_msk=None, mode='Training',
+                                    prompt=args.prompt)
+        acdc_test_dataset = ACDC(args, args.data_path, transform=None, transform_msk=None, mode='Testing',
+                                   prompt=args.prompt)
+        dataset_size = len(acdc_train_dataset)
+        indices = list(range(dataset_size))
+        split_support = 5
+        test_dataset_size = len(acdc_test_dataset)
+        indices_test = list(range(test_dataset_size))
+        split_val = int(np.floor(0.5 * test_dataset_size))
+        np.random.shuffle(indices)
+        np.random.shuffle(indices_test)
+        train_sampler = SubsetRandomSampler(indices[split_support:])
+        support_sampler = SubsetRandomSampler(indices[:split_support])
+        val_sampler = SubsetRandomSampler(indices_test[split_val:])
+        test_sampler = SubsetRandomSampler(indices_test[:split_val])
+        nice_support_loader = DataLoader(acdc_train_dataset, batch_size=1, sampler=support_sampler, num_workers=8,
+                                         pin_memory=False)
+        nice_train_loader = DataLoader(acdc_train_dataset, batch_size=args.b, sampler=train_sampler, num_workers=8,
+                                       pin_memory=False)
+        nice_test_loader = DataLoader(acdc_test_dataset, batch_size=1, sampler=test_sampler, num_workers=8,
+                                      pin_memory=False)
+        nice_val_loader = DataLoader(acdc_test_dataset, batch_size=1, sampler=val_sampler, num_workers=8,
                                      pin_memory=False)
     else:
         print("the dataset is not supported now!!!")
