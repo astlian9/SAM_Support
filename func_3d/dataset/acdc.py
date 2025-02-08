@@ -63,8 +63,8 @@ class ACDC(Dataset):
             mask_file_name = name+str(i)+mask_name
             image = Image.open(os.path.join(self.data_path,img_file_name)).convert('RGB')
             mask_image = Image.open(os.path.join(self.mask_path,mask_file_name)).convert('L')
-            img[i] = np.array(image / 255)
-            mask[i] = np.array(mask / 255)
+            img[i] = np.array(image) / 255
+            mask[i] = np.array(mask) / 255
 
         # img_tensor = torch.zeros(9, 3, self.img_size, self.img_size)
         img = torch.from_numpy(img).permute(0, 3, 1, 2)
