@@ -56,16 +56,17 @@ class ACDC(Dataset):
         # mask_name = '_MRI_heart_right+heart+ventricle.png'
         mask_name = '_MRI_heart_left+heart+ventricle.png'
         # mask_name = '_MRI_heart_myocardium.png'
-        img = np.zeros((9, 1024, 1024, 3))
-        mask = np.zeros((9, 1024, 1024))
-        for i in range(1,10):
+        img = np.zeros((10, 1024, 1024, 3))
+        mask = np.zeros((10, 1024, 1024))
+        for i in range(10):
             img_file_name = name+str(i)+'_MRI_heart.png'
             mask_file_name = name+str(i)+mask_name
-            image = Image.open(os.path.join(self.data_path,img_file_name)).convert('RGB')
-            img[i] = np.array(image) / 255
-            if os.path.exists(os.path.join(self.mask_path,mask_file_name)):
-                mask_image = Image.open(os.path.join(self.mask_path,mask_file_name)).convert('L')
-                mask[i] = np.array(mask_image) / 255          
+            if os.path.exists(os.path.join(self.data_path,img_file_name)):
+                image = Image.open(os.path.join(self.data_path,img_file_name)).convert('RGB')
+                img[i] = np.array(image) / 255
+                if os.path.exists(os.path.join(self.mask_path,mask_file_name)):
+                    mask_image = Image.open(os.path.join(self.mask_path,mask_file_name)).convert('L')
+                    mask[i] = np.array(mask_image) / 255
 
         # img_tensor = torch.zeros(9, 3, self.img_size, self.img_size)
         img = torch.from_numpy(img).permute(0, 3, 1, 2)
