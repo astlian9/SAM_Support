@@ -512,6 +512,28 @@ def validation_sam(args, val_loader, support_loader, epoch, net: nn.Module, clea
                     total_dice += temp[1]
                     flag = flag + 1
 
+                    '''encode new mask and features to memory'''
+                    maskmem_features_3d, maskmem_pos_enc_3d = net.sam._encode_new_memory(
+                        current_vision_feats=vision_feats,
+                        feat_sizes=feat_sizes,
+                        pred_masks_high_res=high_res_multimasks,
+                        is_mask_from_pts=False)
+                    # dimension hint for your future use
+                    # maskmem_features: torch.Size([batch, 64, 64, 64])
+                    # maskmem_pos_enc: [torch.Size([batch, 64, 64, 64])]
+
+                    maskmem_features_3d = maskmem_features_3d.to(torch.bfloat16)
+                    maskmem_pos_enc_3d = maskmem_pos_enc_3d[0].to(torch.bfloat16)
+                    ''' store it in memory bank'''
+                    if len(memory_bank_feats) < args.memory_bank_size:
+                        memory_bank_feats.append(maskmem_features_3d)
+                        memory_bank_pos_enc.append(maskmem_pos_enc_3d)
+                    else:
+                        memory_bank_feats.pop(0)
+                        memory_bank_pos_enc.pop(0)
+                        memory_bank_feats.append(maskmem_features_3d)
+                        memory_bank_pos_enc.append(maskmem_pos_enc_3d)
+
                     '''vis images'''
                     if (ind % args.vis == 0) & (i % args.vis == 0):
                         namecat = 'Test'
