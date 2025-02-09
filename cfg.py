@@ -16,7 +16,7 @@ def parse_args():
     parser.add_argument('-gpu_device', type=int, default=0, help='use which gpu')
     parser.add_argument('-image_size', type=int, default=144, help='image_size')
     parser.add_argument('-out_size', type=int, default=144, help='output_size')
-    parser.add_argument('-support_size', type=int, default=1, help='image_size')
+    parser.add_argument('-support_size', type=int, default=4, help='image_size')
     parser.add_argument('-distributed', default='none' ,type=str,help='multi GPU ids to use')
     parser.add_argument('-disted', default=False, type=bool, help='whether use multi GPU')
     parser.add_argument('-local_rank',  type=int, help='local rank of gpu for dist training')
