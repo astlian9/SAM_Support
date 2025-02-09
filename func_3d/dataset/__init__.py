@@ -67,8 +67,8 @@ def get_dataloader(args):
         test_sampler = SubsetRandomSampler(indices_test[:split_val])
         nice_support_loader = DataLoader(petct_train_dataset, batch_size=1, sampler=support_sampler, num_workers=8, pin_memory=False)
         nice_train_loader = DataLoader(petct_train_dataset, batch_size=args.b, sampler=train_sampler, num_workers=8, pin_memory=False)
-        nice_test_loader = DataLoader(petct_test_dataset, batch_size=1, sampler=test_sampler, num_workers=8, pin_memory=False)
-        nice_val_loader = DataLoader(petct_test_dataset, batch_size=1, sampler=val_sampler, num_workers=8,
+        nice_test_loader = DataLoader(petct_test_dataset, batch_size=1, sampler=test_sampler, num_workers=1, pin_memory=False)
+        nice_val_loader = DataLoader(petct_test_dataset, batch_size=1, sampler=val_sampler, num_workers=1,
                                      pin_memory=False)
     elif args.dataset == 'petct_distributed':
         petct_train_dataset = PETCT(args, args.data_path, transform=None, transform_msk=None, mode='Training',
