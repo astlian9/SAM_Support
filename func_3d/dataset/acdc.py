@@ -25,6 +25,8 @@ class ACDC(Dataset):
 
         # Set the basic information of the dataset
         self.name_list = os.listdir(self.data_path)
+        self.name_list = [i[:19] for i in self.name_list]
+        self.name_list = list(set(self.name_list))
         self.mode = mode
         self.prompt = prompt
         self.img_size = args.image_size
@@ -39,22 +41,24 @@ class ACDC(Dataset):
             self.video_length = None
 
     def __len__(self):
-        if self.mode == 'Training':
-            return 100
-        if self.mode == 'Testing':
-            return 50
+        # if self.mode == 'Training':
+        #     return 100
+        # if self.mode == 'Testing':
+        #     return 50
+        return len(self.name_list)
 
     def __getitem__(self, index):
         point_label = 1
         newsize = (self.img_size, self.img_size)
 
         """Get the images"""
-        if self.mode == 'Training':
-            name = 'patient'+str(index).zfill(3)+'_frame01_'
-        if self.mode == 'Testing':
-            name = 'patient'+str(index+100)+'_frame01_'
-        # mask_name = '_MRI_heart_right+heart+ventricle.png'
-        mask_name = '_MRI_heart_left+heart+ventricle.png'
+        # if self.mode == 'Training':
+        #     name = 'patient'+str(index).zfill(3)+'_frame01_'
+        # if self.mode == 'Testing':
+        #     name = 'patient'+str(index+100)+'_frame01_'
+        name = self.name_list[index]
+        mask_name = '_MRI_heart_right+heart+ventricle.png'
+        # mask_name = '_MRI_heart_left+heart+ventricle.png'
         # mask_name = '_MRI_heart_myocardium.png'
         img = np.zeros((10, 1024, 1024, 3))
         mask = np.zeros((10, 1024, 1024))
