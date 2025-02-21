@@ -57,9 +57,9 @@ class ACDC(Dataset):
         # if self.mode == 'Testing':
         #     name = 'patient'+str(index+100)+'_frame01_'
         name = self.name_list[index]
-        # mask_name = '_MRI_heart_right+heart+ventricle.png'
+        mask_name = '_MRI_heart_right+heart+ventricle.png'
         # mask_name = '_MRI_heart_left+heart+ventricle.png'
-        mask_name = '_MRI_heart_myocardium.png'
+        # mask_name = '_MRI_heart_myocardium.png'
         img = np.zeros((10, 1024, 1024, 3))
         mask = np.zeros((10, 1024, 1024))
         for i in range(10):

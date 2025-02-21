@@ -86,6 +86,7 @@ def train_sam(args, net: nn.Module, optimizer, train_loader, support_loader, epo
             length_3d= imgs_input.size(1)
             memory_bank_feats = []
             memory_bank_pos_enc = []
+            loss = 0
             for i in range(length_3d):
                 imgs = imgs_input[:, i, ...]
                 masks = masks_input[:, i, ...]
@@ -111,11 +112,29 @@ def train_sam(args, net: nn.Module, optimizer, train_loader, support_loader, epo
                 similarity_scores = F.softmax(torch.mm(support_vision_feats_temp, vision_feats_temp.t()).t(), dim=1).cuda()
                 support_samples = torch.multinomial(similarity_scores, num_samples=args.support_size)
                 '''memory attention on support embeddings and input image feats'''
-                memory = supportmem_features[support_samples].flatten(3).permute(1, 3, 0, 2).cuda(
+                support_memory = supportmem_features[support_samples].flatten(3).permute(1, 3, 0, 2).cuda(
                     non_blocking=True)  # [4096, Support_size,batch, 64]
-                memory_pos_enc = supportmem_pos_enc[support_samples].flatten(3).permute(1, 3, 0, 2).cuda(non_blocking=True)
-                memory = memory.reshape(-1, memory.size(2), memory.size(3))  # [4096*Support_size, Batch_size, 64]
-                memory_pos_enc = memory_pos_enc.reshape(-1, memory_pos_enc.size(2), memory_pos_enc.size(3))
+                support_memory_pos_enc = supportmem_pos_enc[support_samples].flatten(3).permute(1, 3, 0, 2).cuda(non_blocking=True)
+                #memory = memory.reshape(-1, memory.size(2), memory.size(3))  # [4096*Support_size, Batch_size, 64]
+                #memory_pos_enc = memory_pos_enc.reshape(-1, memory_pos_enc.size(2), memory_pos_enc.size(3))
+
+                '''memory attention on past frames'''
+                if len(memory_bank_feats) ==0:
+                    memory = support_memory.reshape(-1, support_memory.size(2), support_memory.size(3))  # [4096*Support_size, Batch_size, 64]
+                    memory_pos_enc = support_memory_pos_enc.reshape(-1, support_memory_pos_enc.size(2), support_memory_pos_enc.size(3))
+                else:
+                    L = len(memory_bank_feats)
+                    memory_stack_ori = torch.stack(memory_bank_feats, dim=0)
+                    memory_pos_stack_ori = torch.stack(memory_bank_pos_enc, dim=0)
+                    memory_3d = memory_stack_ori.flatten(3).permute(0, 3, 1, 2)
+                    memory_pos_3d = memory_pos_stack_ori.flatten(3).permute(0, 3, 1, 2)
+                    memory = torch.cat([support_memory, memory_3d], dim=0)
+                    memory_pos_enc = torch.cat([support_memory_pos_enc, memory_pos_3d], dim=0)
+                    memory = memory.reshape(-1, memory.size(2), memory.size(3))  # [4096*Support_size, Batch_size, 64]
+                    memory_pos_enc = memory_pos_enc.reshape(-1, memory_pos_enc.size(2), memory_pos_enc.size(3))
+                    # print(memory.shape, support_memory.shape, memory_3d.shape)
+
+
                 vision_feats[-1] = net.sam.memory_attention(
                     curr=[vision_feats[-1]],
                     curr_pos=[vision_pos_embeds[-1]],
@@ -123,35 +142,7 @@ def train_sam(args, net: nn.Module, optimizer, train_loader, support_loader, epo
                     memory_pos=memory_pos_enc,
                     num_obj_ptr_tokens=0
                 )
-                # feats = [feat.cuda(non_blocking=True).permute(1, 2, 0).view(B, -1, *feat_size)
-                #          for feat, feat_size in zip(vision_feats[::-1], feat_sizes[::-1])][::-1]
-                # image_embed = feats[-1]
-                # high_res_feats = feats[:-1]
 
-                # '''memory attention on past frames'''
-                # if len(memory_bank_feats) ==0:
-                #     vision_feats[-1] = vision_feats[-1] + torch.nn.Parameter(torch.zeros(1, B, net.sam.hidden_dim)).to(
-                #         device="cuda")
-                #     vision_pos_embeds[-1] = vision_pos_embeds[-1] + torch.nn.Parameter(
-                #         torch.zeros(1, B, net.sam.hidden_dim)).to(device="cuda")
-                # else:
-                #     L = len(memory_bank_feats)
-                #     memory_stack_ori = torch.stack(memory_bank_feats, dim=0)
-                #     memory_pos_stack_ori = torch.stack(memory_bank_pos_enc, dim=0)
-                #     memory = memory_stack_ori.flatten(3).permute(1,2,0,3)
-                #     # memory = memory.permute(2, 0, 1, 3).reshape(4096*L, B, 64)
-                #     memory = memory.permute(2, 0, 1, 3).reshape(256*L, B, 64)
-                #     # memory_pos = memory_pos_stack_ori.view(L, B, 4096, 64)
-                #     memory_pos = memory_pos_stack_ori.flatten(3).permute(1, 2, 0, 3)
-                #     # memory_pos = memory_pos.permute(2, 0, 1, 3).reshape(4096*L, B, 64)
-                #     memory_pos = memory_pos.permute(2, 0, 1, 3).reshape(256 * L, B, 64)
-                #     vision_feats[-1] = net.sam.memory_attention(
-                #         curr=[vision_feats[-1]],
-                #         curr_pos=[vision_pos_embeds[-1]],
-                #         memory=memory,
-                #         memory_pos=memory_pos,
-                #         num_obj_ptr_tokens=0
-                #     )
                 feats = [feat.cuda(non_blocking=True).permute(1, 2, 0).view(B, -1, *feat_size)
                          for feat, feat_size in zip(vision_feats[::-1], feat_sizes[::-1])][::-1]
                 image_embed = feats[-1]
@@ -187,36 +178,36 @@ def train_sam(args, net: nn.Module, optimizer, train_loader, support_loader, epo
                 # se: torch.Size([batch, n+1, 256])
                 # de: torch.Size([batch, 256, 64, 64])
 
-
-                '''memory attention on past frames'''
-                if len(memory_bank_feats) ==0:
-                    vision_feats[-1] = vision_feats[-1] + torch.nn.Parameter(torch.zeros(1, B, net.sam.hidden_dim)).to(
-                        device="cuda")
-                    vision_pos_embeds[-1] = vision_pos_embeds[-1] + torch.nn.Parameter(
-                        torch.zeros(1, B, net.sam.hidden_dim)).to(device="cuda")
-                else:
-                    L = len(memory_bank_feats)
-                    memory_stack_ori = torch.stack(memory_bank_feats, dim=0)
-                    memory_pos_stack_ori = torch.stack(memory_bank_pos_enc, dim=0)
-                    memory = memory_stack_ori.flatten(3).permute(1,2,0,3)
-                    # memory = memory.permute(2, 0, 1, 3).reshape(4096*L, B, 64)
-                    memory = memory.permute(2, 0, 1, 3).reshape(256*L, B, 64)
-                    # memory_pos = memory_pos_stack_ori.view(L, B, 4096, 64)
-                    memory_pos = memory_pos_stack_ori.flatten(3).permute(1, 2, 0, 3)
-                    # memory_pos = memory_pos.permute(2, 0, 1, 3).reshape(4096*L, B, 64)
-                    memory_pos = memory_pos.permute(2, 0, 1, 3).reshape(256 * L, B, 64)
-                    vision_feats[-1] = net.sam.memory_attention(
-                        curr=[vision_feats[-1]],
-                        curr_pos=[vision_pos_embeds[-1]],
-                        memory=memory,
-                        memory_pos=memory_pos,
-                        num_obj_ptr_tokens=0
-                    )
-
-                feats = [feat.cuda(non_blocking=True).permute(1, 2, 0).view(B, -1, *feat_size)
-                         for feat, feat_size in zip(vision_feats[::-1], feat_sizes[::-1])][::-1]
-                image_embed = feats[-1]
-                high_res_feats = feats[:-1]
+                # '''memory attention on past frames'''
+                # if len(memory_bank_feats) ==0:
+                #     vision_feats[-1] = vision_feats[-1] + torch.nn.Parameter(torch.zeros(1, B, net.sam.hidden_dim)).to(
+                #         device="cuda")
+                #     vision_pos_embeds[-1] = vision_pos_embeds[-1] + torch.nn.Parameter(
+                #         torch.zeros(1, B, net.sam.hidden_dim)).to(device="cuda")
+                # else:
+                #     L = len(memory_bank_feats)
+                #     memory_stack_ori = torch.stack(memory_bank_feats, dim=0)
+                #     memory_pos_stack_ori = torch.stack(memory_bank_pos_enc, dim=0)
+                #     memory = memory_stack_ori.flatten(3).permute(1,2,0,3)
+                #     # memory = memory.permute(2, 0, 1, 3).reshape(4096*L, B, 64)
+                #     memory_shape_temp = (highres_size//4)**2
+                #     memory = memory.permute(2, 0, 1, 3).reshape(memory_shape_temp * L, B, 64)
+                #     # memory_pos = memory_pos_stack_ori.view(L, B, 4096, 64)
+                #     memory_pos = memory_pos_stack_ori.flatten(3).permute(1, 2, 0, 3)
+                #     # memory_pos = memory_pos.permute(2, 0, 1, 3).reshape(4096*L, B, 64)
+                #     memory_pos = memory_pos.permute(2, 0, 1, 3).reshape(memory_shape_temp * L, B, 64)
+                #     vision_feats[-1] = net.sam.memory_attention(
+                #         curr=[vision_feats[-1]],
+                #         curr_pos=[vision_pos_embeds[-1]],
+                #         memory=memory,
+                #         memory_pos=memory_pos,
+                #         num_obj_ptr_tokens=0
+                #     )
+                #
+                # feats = [feat.cuda(non_blocking=True).permute(1, 2, 0).view(B, -1, *feat_size)
+                #          for feat, feat_size in zip(vision_feats[::-1], feat_sizes[::-1])][::-1]
+                # image_embed = feats[-1]
+                # high_res_feats = feats[:-1]
 
                 '''train mask decoder'''
                 low_res_multimasks, iou_predictions, sam_output_tokens, object_score_logits = net.sam.sam_mask_decoder(
@@ -242,10 +233,11 @@ def train_sam(args, net: nn.Module, optimizer, train_loader, support_loader, epo
                 # backpropagation
                 y_0_mask = torch.log(torch.sigmoid((y_0_pred > 0.5).float()) + 1e-10)
                 pred_mask = (pred > 0.5).float()
-                loss = lossfunc(pred, masks)
+                loss_slice = lossfunc(pred, masks)
                 + 0.005 * F.kl_div(y_0_mask, pred_mask, reduction='batchmean')
-                pbar.set_postfix(**{'loss (batch)': loss.item()})
-                epoch_loss += loss.item()
+                pbar.set_postfix(**{'loss (batch)': loss_slice.item()})
+                loss += loss_slice
+                epoch_loss += loss_slice.item()
 
                 '''encode new mask and features to memory'''
                 maskmem_features_3d, maskmem_pos_enc_3d = net.sam._encode_new_memory(
@@ -256,7 +248,6 @@ def train_sam(args, net: nn.Module, optimizer, train_loader, support_loader, epo
                 # dimension hint for your future use
                 # maskmem_features: torch.Size([batch, 64, 64, 64])
                 # maskmem_pos_enc: [torch.Size([batch, 64, 64, 64])]
-
                 maskmem_features_3d = maskmem_features_3d.to(torch.bfloat16)
                 maskmem_pos_enc_3d = maskmem_pos_enc_3d[0].to(torch.bfloat16)
                 ''' store it in memory bank'''
@@ -298,7 +289,7 @@ def validation_sam(args, val_loader, support_loader, epoch, net: nn.Module, clea
     mask_type = torch.float32
 
     n_val = len(val_loader)
-    threshold = (0.1, 0.3, 0.5, 0.7, 0.9)
+    threshold = (0.5, 0.5, 0.5, 0.5, 0.5)
 
     # init
     lossfunc = criterion_G
@@ -380,13 +371,34 @@ def validation_sam(args, val_loader, support_loader, epoch, net: nn.Module, clea
                     similarity_scores = F.softmax(torch.mm(support_vision_feats_temp, vision_feats_temp.t()).t(),
                                                   dim=1).cuda()
                     support_samples = torch.multinomial(similarity_scores, num_samples=args.support_size)
+
                     '''memory attention on support embeddings and input image feats'''
-                    memory = supportmem_features[support_samples].flatten(3).permute(1, 3, 0, 2).cuda(
+                    support_memory = supportmem_features[support_samples].flatten(3).permute(1, 3, 0, 2).cuda(
                         non_blocking=True)  # [4096, Support_size,batch, 64]
-                    memory_pos_enc = supportmem_pos_enc[support_samples].flatten(3).permute(1, 3, 0, 2).cuda(
+                    support_memory_pos_enc = supportmem_pos_enc[support_samples].flatten(3).permute(1, 3, 0, 2).cuda(
                         non_blocking=True)
-                    memory = memory.reshape(-1, memory.size(2), memory.size(3))  # [4096*Support_size, Batch_size, 64]
-                    memory_pos_enc = memory_pos_enc.reshape(-1, memory_pos_enc.size(2), memory_pos_enc.size(3))
+                    # memory = memory.reshape(-1, memory.size(2), memory.size(3))  # [4096*Support_size, Batch_size, 64]
+                    # memory_pos_enc = memory_pos_enc.reshape(-1, memory_pos_enc.size(2), memory_pos_enc.size(3))
+
+                    '''memory attention on past frames'''
+                    if len(memory_bank_feats) == 0:
+                        memory = support_memory.reshape(-1, support_memory.size(2),
+                                                        support_memory.size(3))  # [4096*Support_size, Batch_size, 64]
+                        memory_pos_enc = support_memory_pos_enc.reshape(-1, support_memory_pos_enc.size(2),
+                                                                        support_memory_pos_enc.size(3))
+                    else:
+                        L = len(memory_bank_feats)
+                        memory_stack_ori = torch.stack(memory_bank_feats, dim=0)
+                        memory_pos_stack_ori = torch.stack(memory_bank_pos_enc, dim=0)
+                        memory_3d = memory_stack_ori.flatten(3).permute(0, 3, 1, 2)
+                        memory_pos_3d = memory_pos_stack_ori.flatten(3).permute(0, 3, 1, 2)
+                        memory = torch.cat([support_memory, memory_3d], dim=0)
+                        memory_pos_enc = torch.cat([support_memory_pos_enc, memory_pos_3d], dim=0)
+                        memory = memory.reshape(-1, memory.size(2),
+                                                        memory.size(3))  # [4096*Support_size, Batch_size, 64]
+                        memory_pos_enc = memory_pos_enc.reshape(-1, memory_pos_enc.size(2),
+                                                                        memory_pos_enc.size(3))
+
                     vision_feats[-1] = net.sam.memory_attention(
                         curr=[vision_feats[-1]],
                         curr_pos=[vision_pos_embeds[-1]],
@@ -394,32 +406,6 @@ def validation_sam(args, val_loader, support_loader, epoch, net: nn.Module, clea
                         memory_pos=memory_pos_enc,
                         num_obj_ptr_tokens=0
                     )
-
-                    # '''memory attention on past frames'''
-                    # if len(memory_bank_feats) == 0:
-                    #     vision_feats[-1] = vision_feats[-1] + torch.nn.Parameter(
-                    #         torch.zeros(1, B, net.sam.hidden_dim)).to(
-                    #         device="cuda")
-                    #     vision_pos_embeds[-1] = vision_pos_embeds[-1] + torch.nn.Parameter(
-                    #         torch.zeros(1, B, net.sam.hidden_dim)).to(device="cuda")
-                    # else:
-                    #     L = len(memory_bank_feats)
-                    #     memory_stack_ori = torch.stack(memory_bank_feats, dim=0)
-                    #     memory_pos_stack_ori = torch.stack(memory_bank_pos_enc, dim=0)
-                    #     memory = memory_stack_ori.flatten(3).permute(1, 2, 0, 3)
-                    #     # memory = memory.permute(2, 0, 1, 3).reshape(4096*L, B, 64)
-                    #     memory = memory.permute(2, 0, 1, 3).reshape(256 * L, B, 64)
-                    #     # memory_pos = memory_pos_stack_ori.view(L, B, 4096, 64)
-                    #     memory_pos = memory_pos_stack_ori.flatten(3).permute(1, 2, 0, 3)
-                    #     # memory_pos = memory_pos.permute(2, 0, 1, 3).reshape(4096*L, B, 64)
-                    #     memory_pos = memory_pos.permute(2, 0, 1, 3).reshape(256 * L, B, 64)
-                    #     vision_feats[-1] = net.sam.memory_attention(
-                    #         curr=[vision_feats[-1]],
-                    #         curr_pos=[vision_pos_embeds[-1]],
-                    #         memory=memory,
-                    #         memory_pos=memory_pos,
-                    #         num_obj_ptr_tokens=0
-                    #     )
 
                     feats = [feat.cuda(non_blocking=True).permute(1, 2, 0).view(B, -1, *feat_size)
                              for feat, feat_size in zip(vision_feats[::-1], feat_sizes[::-1])][::-1]
@@ -456,36 +442,37 @@ def validation_sam(args, val_loader, support_loader, epoch, net: nn.Module, clea
                     # se: torch.Size([batch, n+1, 256])
                     # de: torch.Size([batch, 256, 64, 64])
 
-                    '''memory attention on past frames'''
-                    if len(memory_bank_feats) == 0:
-                        vision_feats[-1] = vision_feats[-1] + torch.nn.Parameter(
-                            torch.zeros(1, B, net.sam.hidden_dim)).to(
-                            device="cuda")
-                        vision_pos_embeds[-1] = vision_pos_embeds[-1] + torch.nn.Parameter(
-                            torch.zeros(1, B, net.sam.hidden_dim)).to(device="cuda")
-                    else:
-                        L = len(memory_bank_feats)
-                        memory_stack_ori = torch.stack(memory_bank_feats, dim=0)
-                        memory_pos_stack_ori = torch.stack(memory_bank_pos_enc, dim=0)
-                        memory = memory_stack_ori.flatten(3).permute(1, 2, 0, 3)
-                        # memory = memory.permute(2, 0, 1, 3).reshape(4096*L, B, 64)
-                        memory = memory.permute(2, 0, 1, 3).reshape(256 * L, B, 64)
-                        # memory_pos = memory_pos_stack_ori.view(L, B, 4096, 64)
-                        memory_pos = memory_pos_stack_ori.flatten(3).permute(1, 2, 0, 3)
-                        # memory_pos = memory_pos.permute(2, 0, 1, 3).reshape(4096*L, B, 64)
-                        memory_pos = memory_pos.permute(2, 0, 1, 3).reshape(256 * L, B, 64)
-                        vision_feats[-1] = net.sam.memory_attention(
-                            curr=[vision_feats[-1]],
-                            curr_pos=[vision_pos_embeds[-1]],
-                            memory=memory,
-                            memory_pos=memory_pos,
-                            num_obj_ptr_tokens=0
-                        )
+                    # '''memory attention on past frames'''
+                    # if len(memory_bank_feats) == 0:
+                    #     vision_feats[-1] = vision_feats[-1] + torch.nn.Parameter(
+                    #         torch.zeros(1, B, net.sam.hidden_dim)).to(
+                    #         device="cuda")
+                    #     vision_pos_embeds[-1] = vision_pos_embeds[-1] + torch.nn.Parameter(
+                    #         torch.zeros(1, B, net.sam.hidden_dim)).to(device="cuda")
+                    # else:
+                    #     L = len(memory_bank_feats)
+                    #     memory_stack_ori = torch.stack(memory_bank_feats, dim=0)
+                    #     memory_pos_stack_ori = torch.stack(memory_bank_pos_enc, dim=0)
+                    #     memory = memory_stack_ori.flatten(3).permute(1, 2, 0, 3)
+                    #     # memory = memory.permute(2, 0, 1, 3).reshape(4096*L, B, 64)
+                    #     memory_shape_temp = (highres_size // 4) ** 2
+                    #     memory = memory.permute(2, 0, 1, 3).reshape(memory_shape_temp * L, B, 64)
+                    #     # memory_pos = memory_pos_stack_ori.view(L, B, 4096, 64)
+                    #     memory_pos = memory_pos_stack_ori.flatten(3).permute(1, 2, 0, 3)
+                    #     # memory_pos = memory_pos.permute(2, 0, 1, 3).reshape(4096*L, B, 64)
+                    #     memory_pos = memory_pos.permute(2, 0, 1, 3).reshape(memory_shape_temp * L, B, 64)
+                    #     vision_feats[-1] = net.sam.memory_attention(
+                    #         curr=[vision_feats[-1]],
+                    #         curr_pos=[vision_pos_embeds[-1]],
+                    #         memory=memory,
+                    #         memory_pos=memory_pos,
+                    #         num_obj_ptr_tokens=0
+                    #     )
 
-                    feats = [feat.cuda(non_blocking=True).permute(1, 2, 0).view(B, -1, *feat_size)
-                             for feat, feat_size in zip(vision_feats[::-1], feat_sizes[::-1])][::-1]
-                    image_embed = feats[-1]
-                    high_res_feats = feats[:-1]
+                    # feats = [feat.cuda(non_blocking=True).permute(1, 2, 0).view(B, -1, *feat_size)
+                    #          for feat, feat_size in zip(vision_feats[::-1], feat_sizes[::-1])][::-1]
+                    # image_embed = feats[-1]
+                    # high_res_feats = feats[:-1]
 
                     '''train mask decoder'''
                     low_res_multimasks, iou_predictions, sam_output_tokens, object_score_logits = net.sam.sam_mask_decoder(

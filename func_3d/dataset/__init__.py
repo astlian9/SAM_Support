@@ -42,11 +42,30 @@ def get_dataloader(args):
         '''end'''
     elif args.dataset == 'amos':
         '''amos data'''
-        amos_train_dataset = AMOS(args, args.data_path, transform = None, transform_msk= None, mode = 'Training', prompt=args.prompt)
-        amos_test_dataset = AMOS(args, args.data_path, transform = None, transform_msk= None, mode = 'Test', prompt=args.prompt)
-
-        nice_train_loader = DataLoader(amos_train_dataset, batch_size=1, shuffle=True, num_workers=8, pin_memory=True)
-        nice_test_loader = DataLoader(amos_test_dataset, batch_size=1, shuffle=False, num_workers=1, pin_memory=True)
+        amos_train_dataset = AMOS(args, args.data_path, transform=None, transform_msk=None, mode='Training',
+                                  prompt=args.prompt)
+        amos_test_dataset = AMOS(args, args.data_path, transform=None, transform_msk=None, mode='Testing',
+                                 prompt=args.prompt)
+        dataset_size = len(amos_train_dataset)
+        indices = list(range(dataset_size))
+        split_support = 5
+        test_dataset_size = len(amos_test_dataset)
+        indices_test = list(range(test_dataset_size))
+        split_val = int(np.floor(0.5 * test_dataset_size))
+        np.random.shuffle(indices)
+        np.random.shuffle(indices_test)
+        train_sampler = SubsetRandomSampler(indices[split_support:])
+        support_sampler = SubsetRandomSampler(indices[:split_support])
+        val_sampler = SubsetRandomSampler(indices_test[split_val:])
+        test_sampler = SubsetRandomSampler(indices_test[:split_val])
+        nice_support_loader = DataLoader(amos_train_dataset, batch_size=1, sampler=support_sampler, num_workers=8,
+                                         pin_memory=False)
+        nice_train_loader = DataLoader(amos_train_dataset, batch_size=args.b, sampler=train_sampler, num_workers=8,
+                                       pin_memory=False)
+        nice_test_loader = DataLoader(amos_test_dataset, batch_size=1, sampler=test_sampler, num_workers=8,
+                                      pin_memory=False)
+        nice_val_loader = DataLoader(amos_test_dataset, batch_size=1, sampler=val_sampler, num_workers=8,
+                                     pin_memory=False)
         '''end'''
     elif args.dataset == 'petct':
         petct_train_dataset = PETCT(args, args.data_path, transform=None, transform_msk=None, mode='Training',
