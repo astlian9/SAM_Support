@@ -6,6 +6,7 @@ def parse_args():
     parser.add_argument('-net', type=str, default='sam2', help='net type')
     parser.add_argument('-encoder', type=str, default='vit_b', help='encoder type')
     parser.add_argument('-exp_name', default='samba_train_test', type=str, help='experiment name')
+    parser.add_argument('-task', type=str, default='left+kidney', help='organs name for segmentation')
     parser.add_argument('-vis', type=int, default=10, help='Generate visualisation during validation')
     parser.add_argument('-train_vis', type=bool, default=False, help='Generate visualisation during training')
     parser.add_argument('-prompt', type=str, default='bbox', help='type of prompt, bbox or click')

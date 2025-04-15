@@ -362,22 +362,22 @@ def validation_sam(args, val_loader, support_loader, epoch, net: nn.Module, clea
                     masks=None,
                     batch_size=B,
                 )
-                y_0 = net.sam.sam_mask_decoder(
-                    image_embeddings=image_embed,
-                    image_pe=net.sam.sam_prompt_encoder.get_dense_pe(),
-                    sparse_prompt_embeddings = se,
-                    dense_prompt_embeddings = de,
-                    multimask_output=False, # args.multimask_output if you want multiple masks
-                    repeat_image=False,  # the image is already batched
-                    high_res_features = high_res_feats)[0]
-                y_0_pred = F.interpolate(y_0, size=(args.out_size, args.out_size))
-                box_corordinates = random_box_gai(y_0_pred).cuda()
-                se, de = net.sam.sam_prompt_encoder(
-                        points=None, #(coords_torch, labels_torch)
-                        boxes=box_corordinates,
-                        masks=None,
-                        batch_size=B,
-                    )
+                # y_0 = net.sam.sam_mask_decoder(
+                #     image_embeddings=image_embed,
+                #     image_pe=net.sam.sam_prompt_encoder.get_dense_pe(),
+                #     sparse_prompt_embeddings = se,
+                #     dense_prompt_embeddings = de,
+                #     multimask_output=False, # args.multimask_output if you want multiple masks
+                #     repeat_image=False,  # the image is already batched
+                #     high_res_features = high_res_feats)[0]
+                # y_0_pred = F.interpolate(y_0, size=(args.out_size, args.out_size))
+                # box_corordinates = random_box_gai(y_0_pred).cuda()
+                # se, de = net.sam.sam_prompt_encoder(
+                #         points=None, #(coords_torch, labels_torch)
+                #         boxes=box_corordinates,
+                #         masks=None,
+                #         batch_size=B,
+                #     )
 
                 low_res_multimasks, iou_predictions, sam_output_tokens, object_score_logits = net.sam.sam_mask_decoder(
                     image_embeddings=image_embed,
@@ -403,6 +403,7 @@ def validation_sam(args, val_loader, support_loader, epoch, net: nn.Module, clea
 
                 '''vis images'''
                 if ind % args.vis == 0:
+                # if (epoch == 0) or (epoch==99):
                     namecat = 'Test'
                     for na in name:
                         img_name = na

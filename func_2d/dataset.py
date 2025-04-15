@@ -11,6 +11,7 @@ import torch.nn.functional as F
 import gzip
 from PIL import Image
 from torch.utils.data import Dataset
+from scipy import ndimage
 
 from func_2d.utils import random_click
 
@@ -286,14 +287,17 @@ class CAMUS(Dataset):
             name = self.name_list[index-len(self.name_list)]
             img_path = os.path.join(self.data_path, name, name+'_2CH_ED.nii.gz')
             msk_path = os.path.join(self.data_path, name, name+'_2CH_ED_gt.nii.gz')
+            name = name+'_2CH_ED'
         else:
             name = self.name_list[index]
             img_path = os.path.join(self.data_path, name, name + '_4CH_ED.nii.gz')
             msk_path = os.path.join(self.data_path, name, name + '_4CH_ED_gt.nii.gz')
+            name = name + '_4CH_ED'
 
         img = Image.fromarray(nib.load(img_path).get_fdata()).convert('RGB')
         mask = nib.load(msk_path).get_fdata()
-        mask[mask != 1] = 0
+        mask[mask != 2] = 0
+        mask[mask>0]=1
 
         if self.prompt == 'click':
             point_label, pt = random_click(np.array(mask) / 255, point_label)
@@ -360,6 +364,71 @@ class BUSI(Dataset):
             torch.set_rng_state(state)
             mask = Image.fromarray(mask)
             mask = self.transform(mask).int()
+
+        image_meta_dict = {'filename_or_obj':name}
+        return {
+            'image':img,
+            'mask': mask,
+            'p_label':point_label,
+            'pt':pt,
+            'image_meta_dict':image_meta_dict,
+        }
+
+
+class DLtrack(Dataset):
+    def __init__(self, args, data_path, transform=None, transform_msk=None, mode='Training', prompt='click', plane=False):
+
+        self.args = args
+        self.data_path = data_path
+        if self.args.task == 'apo':
+            self.image_path = os.path.join(self.data_path,'apo_images')
+            self.mask_path = os.path.join(self.data_path, 'apo_masks')
+        if self.args.task == 'fas':
+            self.image_path = os.path.join(self.data_path, 'fasc_images_S')
+            self.mask_path = os.path.join(self.data_path, 'fasc_masks_S')
+        self.mode = mode
+        self.prompt = prompt
+        self.img_size = args.image_size
+
+        self.transform = transform
+        self.transform_msk = transform_msk
+        self.name_list = os.listdir(self.image_path)
+
+    def __len__(self):
+        return len(self.name_list)
+
+
+    def __getitem__(self, index):
+        # if self.mode == 'Training':
+        #     point_label = random.randint(0, 1)
+        #     inout = random.randint(0, 1)
+        # else:
+        #     inout = 1
+        #     point_label = 1
+        point_label = 1
+
+        """Get the images"""
+        name = self.name_list[index]
+        img = Image.open(os.path.join(self.image_path,name)).convert('RGB')
+        mask = Image.open(os.path.join(self.mask_path,name)).convert('L')
+
+        mask = np.array(mask)
+        mask[mask==mask.min()] = 0
+        mask[mask>0] = 1
+        mask = ndimage.binary_dilation(mask, structure=np.ones((6,6)))
+        mask = (mask*255).astype(np.uint8)
+
+
+
+        if self.prompt == 'click':
+            point_label, pt = random_click(np.array(mask) / 255, point_label)
+
+        if self.transform:
+            state = torch.get_rng_state()
+            img = self.transform(img)
+            torch.set_rng_state(state)
+            mask = Image.fromarray(mask)
+            mask = self.transform_msk(mask).int()
 
         image_meta_dict = {'filename_or_obj':name}
         return {

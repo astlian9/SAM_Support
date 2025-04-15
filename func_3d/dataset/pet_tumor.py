@@ -6,6 +6,7 @@ import numpy as np
 import torch
 from PIL import Image
 import torch.nn.functional as F
+import torchvision.transforms as transforms
 from torch.utils.data import Dataset
 
 from func_3d.utils import random_click, generate_bbox, random_click_new
@@ -86,14 +87,12 @@ class PETCT(Dataset):
             starting_frame = np.random.randint(0, num_frame - video_length + 1) + starting_frame_nonzero
         else:
             starting_frame = starting_frame_nonzero
-
         # img_tensor = torch.zeros(video_length, 2, self.img_size, self.img_size)
         img = torch.from_numpy(raw_data[0, :, :, starting_frame:starting_frame + video_length]).permute(2,0,1)
         mask = torch.from_numpy(data_seg_3d[:, :, starting_frame:starting_frame + video_length]).permute(2,0,1)
-
         img = img.unsqueeze(1).repeat(1,3,1,1)
+        # img = transforms.functional.adjust_gamma(img*255, gamma=0.5) /255
         mask = mask.unsqueeze(1)
-
         img = F.interpolate(img, size=(self.img_size, self.img_size), mode='bilinear', align_corners=False)
         mask = F.interpolate(mask, size=(self.out_size, self.out_size), mode='bilinear', align_corners=False)
 
@@ -106,7 +105,7 @@ class PETCT(Dataset):
             mask = Image.fromarray(mask)
             mask = self.transform(mask).int()
 
-        image_meta_dict = {'filename_or_obj': name}
+        image_meta_dict = {'filename_or_obj': name+str(starting_frame_nonzero)}
         return {
             'image': img,
             'mask': mask,

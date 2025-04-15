@@ -66,10 +66,12 @@ def train_sam(args, net: nn.Module, optimizer, train_loader, support_loader, epo
             _, support_vision_feats, support_vision_pos_embeds, _ = net.sam._prepare_backbone_features(
                 support_backbone_out)
             '''encode support mask into support embeddings'''
+            high_res_supportmasks = F.interpolate(support_masks, size=(args.image_size, args.image_size),
+                                                  mode="bilinear", align_corners=False)
             supportmem_features, supportmem_pos_enc = net.sam._encode_new_memory(
                 current_vision_feats=support_vision_feats,
                 feat_sizes=feat_sizes,
-                pred_masks_high_res=support_masks,
+                pred_masks_high_res=high_res_supportmasks,
                 is_mask_from_pts=True)
             # dimension hint for your future use
             # maskmem_features: torch.Size([batch, 64, 64, 64])
@@ -123,16 +125,20 @@ def train_sam(args, net: nn.Module, optimizer, train_loader, support_loader, epo
                     memory = support_memory.reshape(-1, support_memory.size(2), support_memory.size(3))  # [4096*Support_size, Batch_size, 64]
                     memory_pos_enc = support_memory_pos_enc.reshape(-1, support_memory_pos_enc.size(2), support_memory_pos_enc.size(3))
                 else:
-                    L = len(memory_bank_feats)
-                    memory_stack_ori = torch.stack(memory_bank_feats, dim=0)
-                    memory_pos_stack_ori = torch.stack(memory_bank_pos_enc, dim=0)
-                    memory_3d = memory_stack_ori.flatten(3).permute(0, 3, 1, 2)
-                    memory_pos_3d = memory_pos_stack_ori.flatten(3).permute(0, 3, 1, 2)
-                    memory = torch.cat([support_memory, memory_3d], dim=0)
-                    memory_pos_enc = torch.cat([support_memory_pos_enc, memory_pos_3d], dim=0)
-                    memory = memory.reshape(-1, memory.size(2), memory.size(3))  # [4096*Support_size, Batch_size, 64]
-                    memory_pos_enc = memory_pos_enc.reshape(-1, memory_pos_enc.size(2), memory_pos_enc.size(3))
+                    # L = len(memory_bank_feats)
+                    # memory_stack_ori = torch.stack(memory_bank_feats, dim=0)
+                    # memory_pos_stack_ori = torch.stack(memory_bank_pos_enc, dim=0)
+                    # memory_3d = memory_stack_ori.flatten(3).permute(0, 3, 1, 2)
+                    # memory_pos_3d = memory_pos_stack_ori.flatten(3).permute(0, 3, 1, 2)
+                    # memory = torch.cat([support_memory, memory_3d], dim=0)
+                    # memory_pos_enc = torch.cat([support_memory_pos_enc, memory_pos_3d], dim=0)
+                    # memory = memory.reshape(-1, memory.size(2), memory.size(3))  # [4096*Support_size, Batch_size, 64]
+                    # memory_pos_enc = memory_pos_enc.reshape(-1, memory_pos_enc.size(2), memory_pos_enc.size(3))
                     # print(memory.shape, support_memory.shape, memory_3d.shape)
+                    memory = support_memory.reshape(-1, support_memory.size(2),
+                                                    support_memory.size(3))  # [4096*Support_size, Batch_size, 64]
+                    memory_pos_enc = support_memory_pos_enc.reshape(-1, support_memory_pos_enc.size(2),
+                                                                    support_memory_pos_enc.size(3))
 
 
                 vision_feats[-1] = net.sam.memory_attention(
@@ -322,10 +328,12 @@ def validation_sam(args, val_loader, support_loader, epoch, net: nn.Module, clea
             _, support_vision_feats, support_vision_pos_embeds, _ = net.sam._prepare_backbone_features(
                 support_backbone_out)
             '''encode support mask into support embeddings'''
+            high_res_supportmasks = F.interpolate(support_masks, size=(args.image_size, args.image_size),
+                                                mode="bilinear", align_corners=False)
             supportmem_features, supportmem_pos_enc = net.sam._encode_new_memory(
                 current_vision_feats=support_vision_feats,
                 feat_sizes=feat_sizes,
-                pred_masks_high_res=support_masks,
+                pred_masks_high_res=high_res_supportmasks,
                 is_mask_from_pts=True)
             # dimension hint for your future use
             # maskmem_features: torch.Size([batch, 64, 64, 64])
@@ -411,6 +419,8 @@ def validation_sam(args, val_loader, support_loader, epoch, net: nn.Module, clea
                              for feat, feat_size in zip(vision_feats[::-1], feat_sizes[::-1])][::-1]
                     image_embed = feats[-1]
                     high_res_feats = feats[:-1]
+                    # print('image_embed', image_embed.min(), image_embed.max())
+                    # print('high_res', high_res_feats[0].min(), high_res_feats[0].max())
 
                     with torch.no_grad():
                         '''infer from cross attentioned feats and zero prompts'''
@@ -522,7 +532,7 @@ def validation_sam(args, val_loader, support_loader, epoch, net: nn.Module, clea
                         memory_bank_pos_enc.append(maskmem_pos_enc_3d)
 
                     '''vis images'''
-                    if (ind % args.vis == 0) & (i % args.vis == 0):
+                    if ((ind+1) % args.vis == 0) & ((i+1) % args.vis == 0):
                         namecat = 'Test'
                         for na in name:
                             img_name = na

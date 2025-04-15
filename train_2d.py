@@ -30,6 +30,7 @@ def main():
 
     args = cfg.parse_args()
     GPUdevice = torch.device('cuda', args.gpu_device)
+    torch.cuda.set_device(GPUdevice)
 
     net = get_network(args, args.net, use_gpu=args.gpu, gpu_device=GPUdevice, distribution = args.distributed)
     if args.pretrain:
@@ -53,8 +54,8 @@ def main():
         start_epoch = checkpoint['epoch']
         best_tol = checkpoint['best_tol']
 
-        net.load_state_dict(checkpoint['state_dict'],strict=False)
-        # optimizer.load_state_dict(checkpoint['optimizer'], strict=False)
+        net.load_state_dict(checkpoint['state_dict'],strict=True)
+        optimizer.load_state_dict(checkpoint['optimizer'])
 
         args.path_helper = checkpoint['path_helper']
         logger = create_logger(args.path_helper['log_path'])
@@ -67,12 +68,21 @@ def main():
 
     '''segmentation data'''
     transform_train = transforms.Compose([
+        # transforms.RandomHorizontalFlip(p=0.5),  # Randomly flip images horizontally
+        # transforms.RandomRotation(15),  # Rotate image by ±15 degrees
+        # transforms.RandomResizedCrop(224, scale=(0.8, 1.0)),  # Random crop and resize
+        # transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
         transforms.Resize((args.image_size,args.image_size)),
         transforms.ToTensor(),
     ])
 
     transform_test = transforms.Compose([
         transforms.Resize((args.image_size, args.image_size)),
+        transforms.ToTensor(),
+    ])
+
+    transform_mask = transforms.Compose([
+        transforms.Resize((args.out_size, args.out_size)),
         transforms.ToTensor(),
     ])
 
@@ -86,12 +96,20 @@ def main():
         dataset_size = len(refuge_train_dataset)
         indices = list(range(dataset_size))
         split = int(np.floor(0.125 * dataset_size))
+        test_dataset_size = len(refuge_test_dataset)
+        indices_test = list(range(test_dataset_size))
+        split_val = int(np.floor(0.5 * test_dataset_size))
         np.random.shuffle(indices)
+        np.random.shuffle(indices_test)
+        val_sampler = SubsetRandomSampler(indices_test[split_val:])
+        test_sampler = SubsetRandomSampler(indices_test[:split_val])
         train_sampler = SubsetRandomSampler(indices[split:])
         support_sampler = SubsetRandomSampler(indices[:split])
         nice_train_loader = DataLoader(refuge_train_dataset, batch_size=args.b, sampler=train_sampler, num_workers=2, pin_memory=True)
         nice_support_loader = DataLoader(refuge_train_dataset, batch_size=1,  sampler=support_sampler, num_workers=2, pin_memory=False)
-        nice_test_loader = DataLoader(refuge_test_dataset, batch_size=args.b, shuffle=False, num_workers=2, pin_memory=True)
+        nice_test_loader = DataLoader(refuge_test_dataset, batch_size=args.b, sampler=test_sampler, num_workers=2, pin_memory=True)
+        nice_val_loader = DataLoader(refuge_test_dataset, batch_size=args.b, sampler=val_sampler, num_workers=2,
+                                      pin_memory=True)
         '''end'''
 
     if args.dataset == 'STARE':
@@ -198,6 +216,29 @@ def main():
         nice_test_loader = DataLoader(stare_train_dataset, batch_size=args.b, sampler=test_sampler, num_workers=2, pin_memory=False)
         '''end'''
 
+    if args.dataset == 'DLtrack':
+        '''Pandental data'''
+        stare_train_dataset = DLtrack(args, args.data_path, transform = transform_train,transform_msk=transform_mask)
+
+        dataset_size = len(stare_train_dataset)
+        indices = list(range(dataset_size))
+        split_support = int(np.floor(0.02 * dataset_size))
+        split_val = int(np.floor(0.15 * dataset_size)) + split_support
+        split_test = int(np.floor(0.3 * dataset_size)) + split_support
+        np.random.shuffle(indices)
+        train_sampler = SubsetRandomSampler(indices[split_test:])
+        support_sampler = SubsetRandomSampler(indices[:split_support])
+        val_sampler = SubsetRandomSampler(indices[split_support: split_val])
+        test_sampler = SubsetRandomSampler(indices[split_val:split_test])
+        nice_train_loader = DataLoader(stare_train_dataset, batch_size=args.b, sampler=train_sampler, num_workers=2,
+                                       pin_memory=True)
+        nice_support_loader = DataLoader(stare_train_dataset, batch_size=args.support_size, sampler=support_sampler, num_workers=2,
+                                         pin_memory=False)
+        nice_test_loader = DataLoader(stare_train_dataset, batch_size=args.b, sampler=test_sampler, num_workers=2,
+                                      pin_memory=True)
+        nice_val_loader = DataLoader(stare_train_dataset, batch_size=args.b, sampler=val_sampler, num_workers=2,
+                                     pin_memory=True)
+
     '''checkpoint path and tensorboard'''
     checkpoint_path = os.path.join(settings.CHECKPOINT_PATH, args.net, settings.TIME_NOW)
     #use tensorboard
@@ -226,7 +267,11 @@ def main():
         logger.info(f'Train loss: {loss} || @ epoch {epoch}.')
         time_end = time.time()
         print('time_for_training ', time_end - time_start)
-
+        # if epoch==0:
+        #     tol, (eiou, edice) = function.validation_sam(args, nice_test_loader, nice_support_loader, epoch, net,
+        #                                                  writer)
+            # tol, (eiou, edice) = function.validation_sam(args, nice_train_loader, nice_support_loader, epoch, net,
+            #                                              writer)
         # validation
         net.eval()
         if epoch % args.val_freq == 0 or epoch == settings.EPOCH-1:
@@ -260,8 +305,10 @@ def main():
     checkpoint_final = torch.load(os.path.join(args.path_helper['ckpt_path'],'best_dice_checkpoint.pth'))
     net.load_state_dict(checkpoint_final['state_dict'])
     net.eval()
+    epoch=99
     tol, (eiou, edice) = function.validation_sam(args, nice_test_loader, nice_support_loader, epoch, net, writer)
     logger.info(f'Test score: {tol}, IOU: {eiou}, DICE: {edice} || @ epoch {epoch}.')
+    tol, (eiou, edice) = function.validation_sam(args, nice_train_loader, nice_support_loader, epoch, net, writer)
     writer.close()
 
 

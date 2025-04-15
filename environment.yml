@@ -1,13 +1,16 @@
-name: medsam2
+name: sam2_sap
 channels:
   - conda-forge
+  - bioconda
   - defaults
 dependencies:
   - _libgcc_mutex=0.1=main
   - _openmp_mutex=5.1=1_gnu
   - asttokens=2.4.1=pyhd8ed1ab_0
+  - blas=1.1=openblas
+  - bottleneck=1.4.2=py312ha883a20_0
   - bzip2=1.0.8=h5eee18b_6
-  - ca-certificates=2024.7.4=hbcca054_0
+  - ca-certificates=2025.1.31=hbcca054_0
   - comm=0.2.2=pyhd8ed1ab_0
   - debugpy=1.6.7=py312h6a678d5_0
   - decorator=5.1.1=pyhd8ed1ab_0
@@ -23,13 +26,20 @@ dependencies:
   - ld_impl_linux-64=2.38=h1181459_1
   - libffi=3.4.4=h6a678d5_1
   - libgcc-ng=11.2.0=h1234567_1
+  - libgfortran=3.0.0=1
+  - libgfortran-ng=13.2.0=h69a702a_0
+  - libgfortran5=13.2.0=ha4646dd_0
   - libgomp=11.2.0=h1234567_1
+  - libopenblas=0.3.21=h043d6bf_0
   - libsodium=1.0.18=h36c2ea0_1
   - libstdcxx-ng=11.2.0=h1234567_1
   - libuuid=1.41.5=h5eee18b_0
   - matplotlib-inline=0.1.7=pyhd8ed1ab_0
   - ncurses=6.4=h6a678d5_0
   - nest-asyncio=1.6.0=pyhd8ed1ab_0
+  - numexpr=2.10.1=py312hd28fd6d_0
+  - numpy-base=2.2.2=py312he1a6c75_0
+  - openblas=0.3.4=ha44fe06_0
   - openssl=3.0.14=h5eee18b_0
   - packaging=24.1=pyhd8ed1ab_0
   - parso=0.8.4=pyhd8ed1ab_0
@@ -42,6 +52,8 @@ dependencies:
   - pure_eval=0.2.3=pyhd8ed1ab_0
   - pygments=2.18.0=pyhd8ed1ab_0
   - python=3.12.4=h5148396_1
+  - python-dateutil=2.9.0.post0=pyhff2d567_1
+  - python-tzdata=2025.1=pyhd8ed1ab_0
   - pyzmq=25.1.2=py312h6a678d5_0
   - readline=8.2=h5eee18b_0
   - setuptools=69.5.1=py312h06a4308_0
@@ -168,9 +180,8 @@ dependencies:
       - pycparser==2.22
       - pydicom==2.4.4
       - pyparsing==3.1.2
-      - python-dateutil==2.9.0.post0
       - python-gdcm==3.0.24.1
-      - graphviz==0.20.3
+      - python-graphviz==0.20.3
       - python-json-logger==2.0.7
       - pytz==2024.1
       - pyyaml==6.0.1
@@ -212,3 +223,4 @@ dependencies:
       - widgetsnbextension==4.0.11
       - wrapt==1.16.0
       - yacs==0.1.8
+prefix: /blue/kgong/yxing2/.conda/envs/medsam2

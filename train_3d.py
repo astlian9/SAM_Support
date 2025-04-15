@@ -17,6 +17,7 @@ from sam_lora_image_encoder import LoRA_Sam
 from func_2d.dataset import *
 from func_2d.utils import *
 from func_3d.dataset import get_dataloader
+from evaluate_3d import evaluate_sam
 
 
 def main():
@@ -54,8 +55,8 @@ def main():
         start_epoch = checkpoint['epoch']
         best_tol = checkpoint['best_tol']
 
-        net.load_state_dict(checkpoint['state_dict'], strict=False)
-        # optimizer.load_state_dict(checkpoint['optimizer'], strict=False)
+        net.load_state_dict(checkpoint['state_dict'], strict=True)
+        optimizer.load_state_dict(checkpoint['optimizer'], strict=False)
 
         args.path_helper = checkpoint['path_helper']
         logger = create_logger(args.path_helper['log_path'])
@@ -97,7 +98,7 @@ def main():
     best_dice = 0.0
 
     for epoch in range(settings.EPOCH):
-        nice_train_loader, nice_test_loader, support_loader, val_loader = get_dataloader(args)
+        nice_train_loader, nice_test_loader, nice_support_loader, nice_val_loader = get_dataloader(args)
         # training
         net.train()
         time_start = time.time()
@@ -136,6 +137,23 @@ def main():
                 }, is_best, args.path_helper['ckpt_path'], filename="best_dice_checkpoint.pth")
             else:
                 is_best = False
+
+        # if epoch == 10:
+        #     #torch.save(net, os.path.join(args.path_helper['ckpt_path'], 'epoch10.pth'))
+        #     torch.save(net.state_dict(), os.path.join(args.path_helper['ckpt_path'], 'epoch10_sd.pth'))
+        #     new_net = get_network(args, args.net, use_gpu=args.gpu, gpu_device=GPUdevice, distribution=args.distributed)
+        #     new_lora_net = LoRA_Sam(new_net, 16)
+        #     checkpoint = torch.load(os.path.join(args.path_helper['ckpt_path'], 'epoch10_sd.pth'))
+        #     new_lora_net.load_state_dict(checkpoint)
+        #     new_lora_net.cuda()
+        #     # for name, param in net.named_parameters():
+        #     #     if name in checkpoint and not torch.allclose(param, checkpoint[name], atol=1e-5):
+        #     #         print(f"Difference in {name}")
+        #     evaluate_sam(args, nice_val_loader, nice_support_loader, 10, net)
+        #     evaluate_sam(args, nice_val_loader, nice_support_loader, 10, new_lora_net)
+        #     net = new_lora_net
+
+
 
     checkpoint_final = torch.load(os.path.join(args.path_helper['ckpt_path'], 'best_dice_checkpoint.pth'))
     net.load_state_dict(checkpoint_final['state_dict'])

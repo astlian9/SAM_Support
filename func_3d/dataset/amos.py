@@ -26,15 +26,23 @@ class AMOS(Dataset):
             self.mask_path = os.path.join(data_path, 'test_mask')
             self.index_path = os.path.join(data_path, 'test_index.csv')
 
-        self.organ = 'liver'
+        # self.organ = 'duodenum'
+        # self.organ = 'postcava'
+        self.organ = args.task
+        print(self.organ)
         # Set the basic information of the dataset
         index = pd.read_csv(self.index_path,dtype=str)
-        index = index[index['organ']==self.organ].copy()
+        index = index[(index['organ']==self.organ)].copy()
         index['mask_name'] = index['dataset']+'_'+index['id']+'_'+index['slice']+'_'+index['type']+'_'+index['task']+'_'+index['organ']+'.png'
         index['image_name'] = index['dataset'] + '_' + index['id'] + '_' + index['slice'] + '_' + index['type'] + '_' + index['task'] + '.png'
         self.index = index
         self.name_list = index['id'].unique()
+        # if mode=='Training':
+        #     self.name_list=['0001','0004']
+        # if mode=='Testing':
+        #     self.name_list=['0304','0323','0344','0308','0325']
         self.mode = mode
+
         self.prompt = prompt
         self.img_size = args.image_size
         self.transform = transform
@@ -55,16 +63,22 @@ class AMOS(Dataset):
         name = self.name_list[index]
         if self.mode=='Training':
             video_length = self.video_length
-            start_frame = np.random.randint(0,len(self.index[self.index['id']==name]) - video_length)
+            if len(self.index[self.index['id']==name]) < self.video_length:
+                start_frame=0
+            else:
+                start_frame = np.random.randint(0,len(self.index[self.index['id']==name]) - video_length+1)
         if self.mode == 'Testing':
-            video_length = len(self.index[self.index['id']==name])
+            video_length = min(len(self.index[self.index['id']==name]),55)
+            # video_length = 30
             start_frame = 0
         img_file_list = self.index[self.index['id']==name]['image_name'].to_list()
         mask_file_list = self.index[self.index['id']==name]['mask_name'].to_list()
         img = np.zeros((video_length, 1024, 1024, 3))
         mask = np.zeros((video_length, 1024, 1024))
-        for i in range(video_length):
+        name_list = []
+        for i in range(min(video_length, len(img_file_list))):
             img_file_name = img_file_list[i+start_frame]
+            name_list.append(img_file_name)
             mask_file_name = mask_file_list[i+start_frame]
             if os.path.exists(os.path.join(self.data_path,img_file_name)):
                 image = Image.open(os.path.join(self.data_path,img_file_name)).convert('RGB')
@@ -89,7 +103,7 @@ class AMOS(Dataset):
             mask = Image.fromarray(mask)
             mask = self.transform(mask).int()
 
-        image_meta_dict = {'filename_or_obj': name}
+        image_meta_dict = {'filename_or_obj': name_list}
         return {
             'image': img,
             'mask': mask,

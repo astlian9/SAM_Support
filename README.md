@@ -1,27 +1,15 @@
-<h1 align="center">● Medical SAM 2: Segment Medical Images As Video Via Segment Anything Model 2</h1>
+<h1 align="center">● SAM2-SAP: Automatic Prompt Driven SAM2 for Medical Image Segmentation</h1>
 
-<p align="center">
-    <a href="https://discord.gg/DN4rvk95CC">
-        <img alt="Discord" src="https://img.shields.io/discord/1146610656779440188?logo=discord&style=flat&logoColor=white"/></a>
-    <img src="https://img.shields.io/static/v1?label=license&message=GPL&color=white&style=flat" alt="License"/>
-</p>
 
-Medical SAM 2, or say MedSAM-2, is an advanced segmentation model that utilizes the [SAM 2](https://github.com/facebookresearch/segment-anything-2) framework to address both 2D and 3D medical
-image segmentation tasks. This method is elaborated on the paper [Medical SAM 2: Segment Medical Images As Video Via Segment Anything Model 2](https://arxiv.org/abs/2408.00874).
+SAM2-SAP is a customized segmentation model that utilizes the [SAM 2](https://github.com/facebookresearch/segment-anything-2) framework to address both 2D and 3D medical image segmentation tasks without requring manual prompts. This method is elaborated based on the paper [SAM2-SAP: Automatic Prompt Driven SAM2 for Medical Image Segmentation].
 
-## 🔥 A Quick Overview 
- <div align="center"><img width="880" height="350" src="https://github.com/MedicineToken/Medical-SAM2/blob/main/vis/framework.png"></div>
- 
-## 🩻 3D Abdomen Segmentation Visualisation
- <div align="center"><img width="420" height="420" src="https://github.com/MedicineToken/Medical-SAM2/blob/main/vis/example.gif"></div>
-
-## 🧐 Requirement
+##  Requirement
 
  Install the environment:
 
  ``conda env create -f environment.yml``
 
- ``conda activate medsam2``
+ ``conda activate sam2_sap``
 
  You can download SAM2 checkpoint from checkpoints folder:
  
@@ -30,56 +18,41 @@ image segmentation tasks. This method is elaborated on the paper [Medical SAM 2:
  Further Note: We tested on the following system environment and you may have to handle some issue due to system difference.
 ```
 Operating System: Ubuntu 22.04
-Conda Version: 23.7.4
+Conda Version: 24.3.0
 Python Version: 3.12.4
+Torch Version: 12.4.1
 ```
-We released our pretrain weight [here](https://huggingface.co/jiayuanz3/MedSAM2_pretrain/tree/main)
+Pretrained weight will be released soon
 
- ## 🎯 Example Cases
- #### Download REFUGE or BCTV or youn own dataset and put in the ``data`` folder, creat the folder if it does not exist ⚒️
+ ## Example Cases
  
- ### 2D case - REFUGE Optic-cup Segmentation from Fundus Images
+ ### 2D case - CAMUS Ultrasound Segmentation
 
-**Step1:** Dowaload pre-processed [REFUGE](https://refuge.grand-challenge.org/) dataset manually from [here](https://huggingface.co/datasets/jiayuanz3/REFUGE/tree/main), or using command lines:
+**Step1:** Run the training by:
 
- ``wget https://huggingface.co/datasets/jiayuanz3/REFUGE/resolve/main/REFUGE.zip``
+``python train_2d.py -net sam2 -exp_name WBC_Abl_Support16 -vis 999 -sam_ckpt ./checkpoints/sam2_hiera_small.pt -sam_config sam2_hiera_s -image_size 256 -out_size 256 -b 8 -val_freq 5 -dataset WBC -data_path /data_path/data/WBC/ -support_size 1 -lr 1e-3``
 
- ``unzip REFUGE.zip``
-
- **Step2:** Run the training and validation by:
+ **Step2:** Run the validation by:
  
-``python train_2d.py -net sam2 -exp_name REFUGE_MedSAM2 -vis 1 -sam_ckpt ./checkpoints/sam2_hiera_small.pt -sam_config sam2_hiera_s -image_size 1024 -out_size 1024 -b 4 -val_freq 1 -dataset REFUGE -data_path ./data/REFUGE``
+``python evaluation_2d.py -net sam2 -exp_name WBC_Abl_Support16 -vis 999 -sam_ckpt ./checkpoints/sam2_hiera_small.pt -sam_config sam2_hiera_s -image_size 256 -out_size 256 -b 8 -val_freq 5 -dataset WBC -data_path /data_path/data/WBC/ -support_size 1 -lr 1e-3``
 
- ### 3D case - Abdominal Multiple Organs Segmentation
+ ### 3D case - Amos22 Multi-organ CT&MRI Segmentation
  
- **Step1:** Dowaload pre-processed [BTCV](https://www.synapse.org/#!Synapse:syn3193805/wiki/217752) dataset manually from [here](https://huggingface.co/datasets/jiayuanz3/btcv/tree/main), or using command lines:
+ **Step1:** Run the training by:
 
- ``wget https://huggingface.co/datasets/jiayuanz3/btcv/resolve/main/btcv.zip``
+``python train_3d.py -net sam2 -exp_name AMOS_float32 -sam_ckpt ./checkpoints/sam2_hiera_small.pt -sam_config sam2_hiera_s -image_size 1024 -out_size 1024 -val_freq 3 -prompt bbox -dataset amos -data_path /data_path/data/amos22/MRI/ -video_length 10 -lr 1e-2 -vis 99 -b 2 -support_size 4 -task left+kidney``
 
- ``unzip btcv.zip``
-
-**Step2:** Run the training and validation by:
+**Step2:** Run the validation by:
 
 
- ``python train_3d.py -net sam2 -exp_name BTCV_MedSAM2 -sam_ckpt ./checkpoints/sam2_hiera_small.pt -sam_config sam2_hiera_s -image_size 1024 -val_freq 1 -prompt bbox -prompt_freq 2 -dataset btcv -data_path ./data/btcv``
+ ``python evaluate_3d.py -net sam2 -exp_name AMOS_float32 -sam_ckpt ./checkpoints/sam2_hiera_small.pt -sam_config sam2_hiera_s -image_size 1024 -out_size 1024 -val_freq 3 -prompt bbox -dataset amos -data_path /data_path/data/amos22/MRI/ -video_length 10 -lr 1e-2 -vis 99 -b 2 -support_size 4 -task left+kidney``
+ 
+ ### multi-gpu training, Using PET/CT dataset
+ 
+ 
+ ``python -m torch.distributed.run --nproc_per_node=2 train_3d_dpp.py -disted True -net sam2 -exp_name PETCT_dpp -sam_ckpt ./checkpoints/sam2_hiera_small.pt -sam_config sam2_hiera_s -image_size 256 -val_freq 5 -prompt bbox -dataset petct_distributed -data_path /data_path/seg_data -image_size 256 -out_size 256 -video_length 5 -lr 1e-4``
+ 
+ 
+ ### To use different resolutions, change the configurations in sam2_hiera_s.yaml
 
 
-## 🚨 News
-- 24-08-05. Our Medical SAM 2 paper **ranked #1 Paper of the day** collected by AK on Hugging Face 🤗
-- 24-08-05. Update 3D example details and pre-processed BTCV dataset download link 🔗
-- 24-08-05. Update 2D example details and pre-processed REFUGE dataset download link 🔗
-- 24-08-05. Our Medical SAM 2 paper was available online 🥳
-- 24-08-05. Our Medical SAM 2 code was available on Github 🥳
-- 24-07-30. The SAM 2 model was released 🤩
-
-## 📝 Cite
- ~~~
-@misc{zhu_medical_2024,
-	title={Medical SAM 2: Segment medical images as video via Segment Anything Model 2},
-    author={Jiayuan Zhu and Yunli Qi and Junde Wu},
-    year = {2024},
-    eprint={2408.00874},
-    archivePrefix={arXiv},
-    primaryClass={cs.CV}
-}
- ~~~

@@ -53,8 +53,10 @@ def get_network(args, net, use_gpu=True, gpu_device = 0, distribution = True):
             # turn on tfloat32 for Ampere GPUs (https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices)
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.allow_tf32 = True
-        net = build_sam2(args.sam_config, args.sam_ckpt, device="cuda")
-
+        if args.sam_ckpt != 'None':
+            net = build_sam2(args.sam_config, args.sam_ckpt, device="cuda")
+        else :
+            net = build_sam2(args.sam_config, device="cuda")
 
     else:
         print('the network name you have entered is not supported yet')
