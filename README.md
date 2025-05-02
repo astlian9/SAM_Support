@@ -3,6 +3,10 @@
 
 SAM2-SAP is a customized segmentation model that utilizes the [SAM 2](https://github.com/facebookresearch/segment-anything-2) framework to address both 2D and 3D medical image segmentation tasks without requring manual prompts. This method is elaborated based on the paper [SAM2-SAP: Automatic Prompt Driven SAM2 for Medical Image Segmentation].
 
+## Model Architecture
+
+![Image](SAM2_support.png)
+
 ##  Requirement
 
  Install the environment:
@@ -23,6 +27,10 @@ Python Version: 3.12.4
 Torch Version: 12.4.1
 ```
 Pretrained weight will be released soon
+
+ ## Pre-trained Weights
+
+### 3D weights will be released on [HuggingFace](https://huggingface.co)
 
  ## Example Cases
  
