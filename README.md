@@ -1,5 +1,7 @@
 <h1 align="center">● SAM2-SAP: Automatic Prompt Driven SAM2 for Medical Image Segmentation</h1>
 
+<font size=3><div align='center' > <a href=https://github.com/astlian9>**Paper**</a> | [**Datasets**](#Datasets) | [**Model**](#Pre-trained Weights) | [**Training**](#Example Training Cases) | [**Evaluation**](#Example Testing Cases)</div></font>
+
 
 SAM2-SAP is a customized segmentation model that utilizes the [SAM 2](https://github.com/facebookresearch/segment-anything-2) framework to address both 2D and 3D medical image segmentation tasks without requring manual prompts. This method is elaborated based on the paper [SAM2-SAP: Automatic Prompt Driven SAM2 for Medical Image Segmentation].
 
@@ -26,13 +28,20 @@ Conda Version: 24.3.0
 Python Version: 3.12.4
 Torch Version: 12.4.1
 ```
-Pretrained weight will be released soon
+## Datasets
+Most of our datasets we use are public datasets. We adopt the BioMedParse Dataset, which has acquired datasets including
+[CAMUS](https://www.creatis.insa-lyon.fr/Challenge/camus/index.html), 
+[Amos22](https://amos22.grand-challenge.org/) ,
+[ACDC](https://www.creatis.insa-lyon.fr/Challenge/acdc/databases.html),
+[BUSI](https://scholar.cu.edu.eg/?q=afahmy/pages/dataset),
+[REFUGE](https://bitbucket.org/woalsdnd/refuge/src). Full datasets can be downloaded via [hugging face link](https://huggingface.co/datasets/microsoft/BiomedParseData).
+
 
  ## Pre-trained Weights
 
 ### 3D weights will be released on [HuggingFace](https://huggingface.co)
 
- ## Example Cases
+ ## Example Training Cases
  
  ### 2D case - CAMUS Ultrasound Segmentation
 
@@ -46,21 +55,37 @@ Pretrained weight will be released soon
 
  ### 3D case - Amos22 Multi-organ CT&MRI Segmentation
  
- **Step1:** Run the training by:
+ **Single GPU:** Run the training by:
 
 ``python train_3d.py -net sam2 -exp_name AMOS_float32 -sam_ckpt ./checkpoints/sam2_hiera_small.pt -sam_config sam2_hiera_s -image_size 1024 -out_size 1024 -val_freq 3 -prompt bbox -dataset amos -data_path /data_path/data/amos22/MRI/ -video_length 10 -lr 1e-2 -vis 99 -b 2 -support_size 4 -task left+kidney``
 
-**Step2:** Run the validation by:
+**Multi GPU:** Run the training by:
 
-
- ``python evaluate_3d.py -net sam2 -exp_name AMOS_float32 -sam_ckpt ./checkpoints/sam2_hiera_small.pt -sam_config sam2_hiera_s -image_size 1024 -out_size 1024 -val_freq 3 -prompt bbox -dataset amos -data_path /data_path/data/amos22/MRI/ -video_length 10 -lr 1e-2 -vis 99 -b 2 -support_size 4 -task left+kidney``
- 
- ### multi-gpu training, Using PET/CT dataset
- 
- 
  ``python -m torch.distributed.run --nproc_per_node=2 train_3d_dpp.py -disted True -net sam2 -exp_name PETCT_dpp -sam_ckpt ./checkpoints/sam2_hiera_small.pt -sam_config sam2_hiera_s -image_size 256 -val_freq 5 -prompt bbox -dataset petct_distributed -data_path /data_path/seg_data -image_size 256 -out_size 256 -video_length 5 -lr 1e-4``
  
  
  ### To use different resolutions, change the configurations in sam2_hiera_s.yaml
+
+## Example Testing Cases
+**Step1:** Download the pretrained weights.
+**Step2:** Run the validation by:
+ ``python evaluate_3d.py -net sam2 -exp_name AMOS_float32 -sam_ckpt ./checkpoints/sam2_hiera_small.pt -sam_config sam2_hiera_s -image_size 1024 -out_size 1024 -val_freq 3 -prompt bbox -dataset amos -data_path /data_path/data/amos22/MRI/ -video_length 10 -lr 1e-2 -vis 99 -b 2 -support_size 4 -task left+kidney``
+## Citations and Acknowledgements
+If our dataset or project are helpful to you, please consider citing:
+```bibtex
+@misc{bai2024m3d,
+      title={M3D: Advancing 3D Medical Image Analysis with Multi-Modal Large Language Models}, 
+      author={Fan Bai and Yuxin Du and Tiejun Huang and Max Q. -H. Meng and Bo Zhao},
+      year={2024},
+      eprint={2404.00578},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV}
+}
+```
+We appreciate the open-source project including: 
+[MedSAM2](https://github.com/SuperMedIntel/Medical-SAM2)
+[H-SAM](https://github.com/Cccccczh404/H-SAM)
+[MedSAM](https://github.com/bowang-lab/MedSAM)
+
 
 
