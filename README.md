@@ -41,7 +41,6 @@ Most of our datasets we use are public datasets. We adopt the BioMedParse Datase
 
 ### 3D weights will be released on [HuggingFace](https://huggingface.co)
  ## Training
- ## Example Training Cases
  
  ### 2D case - CAMUS Ultrasound Segmentation
 
@@ -67,7 +66,7 @@ Most of our datasets we use are public datasets. We adopt the BioMedParse Datase
  ### To use different resolutions, change the configurations in sam2_hiera_s.yaml
  ## Testing
 
-## Example Testing Cases
+### Example testing case using Amos22 dataset
 **Step1:** Download the pretrained weights.
 **Step2:** Run the validation by:
  ``python evaluate_3d.py -net sam2 -exp_name AMOS_float32 -sam_ckpt ./checkpoints/sam2_hiera_small.pt -sam_config sam2_hiera_s -image_size 1024 -out_size 1024 -val_freq 3 -prompt bbox -dataset amos -data_path /data_path/data/amos22/MRI/ -video_length 10 -lr 1e-2 -vis 99 -b 2 -support_size 4 -task left+kidney``
