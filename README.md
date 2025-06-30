@@ -1,6 +1,6 @@
 <h1 align="center">● SAM2-SGP: Enhancing SAM2 for Medical Image Segmentation via Support-Set Guided Prompting</h1>
 
-<font size=3><div align='center' > <a href=https://github.com/astlian9>**Paper**</a> | [**Datasets**](#Datasets) | [**Model**](#Pre-trained Weights) | [**Training**](#Example Training Cases) | [**Evaluation**](#Example Testing Cases)</div></font>
+<font size=3><div align='center' > <a href=https://arxiv.org/abs/2506.19658>**Paper**</a> | [**Datasets**](#Datasets) | [**Model**](#Pre-trained Weights) | [**Training**](#Example Training Cases) | [**Evaluation**](#Example Testing Cases)</div></font>
 
 
 SAM2-SGP is a customized segmentation model that utilizes the [SAM 2](https://github.com/facebookresearch/segment-anything-2) framework to address both 2D and 3D medical image segmentation tasks without requring manual prompts. This method is elaborated based on the paper [SAM2-SGP: Enhancing SAM2 for Medical Image Segmentation via Support-Set Guided Prompting](https://arxiv.org/abs/2506.19658).
