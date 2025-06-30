@@ -74,13 +74,14 @@ Most of our datasets we use are public datasets. We adopt the BioMedParse Datase
 ## Citations and Acknowledgements
 If our dataset or project are helpful to you, please consider citing:
 ```bibtex
-@misc{bai2024m3d,
-      title={M3D: Advancing 3D Medical Image Analysis with Multi-Modal Large Language Models}, 
-      author={Fan Bai and Yuxin Du and Tiejun Huang and Max Q. -H. Meng and Bo Zhao},
-      year={2024},
-      eprint={2404.00578},
+@misc{xing2025sam2sgpenhancingsam2medical,
+      title={SAM2-SGP: Enhancing SAM2 for Medical Image Segmentation via Support-Set Guided Prompting}, 
+      author={Yang Xing and Jiong Wu and Yuheng Bu and Kuang Gong},
+      year={2025},
+      eprint={2506.19658},
       archivePrefix={arXiv},
-      primaryClass={cs.CV}
+      primaryClass={cs.CV},
+      url={https://arxiv.org/abs/2506.19658}, 
 }
 ```
 We appreciate the open-source project including: 
