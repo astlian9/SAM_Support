@@ -126,20 +126,20 @@ def train_sam(args, net: nn.Module, optimizer, train_loader, support_loader, epo
                     memory = support_memory.reshape(-1, support_memory.size(2), support_memory.size(3))  # [4096*Support_size, Batch_size, 64]
                     memory_pos_enc = support_memory_pos_enc.reshape(-1, support_memory_pos_enc.size(2), support_memory_pos_enc.size(3))
                 else:
-                    # L = len(memory_bank_feats)
-                    # memory_stack_ori = torch.stack(memory_bank_feats, dim=0)
-                    # memory_pos_stack_ori = torch.stack(memory_bank_pos_enc, dim=0)
-                    # memory_3d = memory_stack_ori.flatten(3).permute(0, 3, 1, 2)
-                    # memory_pos_3d = memory_pos_stack_ori.flatten(3).permute(0, 3, 1, 2)
-                    # memory = torch.cat([support_memory, memory_3d], dim=0)
-                    # memory_pos_enc = torch.cat([support_memory_pos_enc, memory_pos_3d], dim=0)
-                    # memory = memory.reshape(-1, memory.size(2), memory.size(3))  # [4096*Support_size, Batch_size, 64]
-                    # memory_pos_enc = memory_pos_enc.reshape(-1, memory_pos_enc.size(2), memory_pos_enc.size(3))
-                    # print(memory.shape, support_memory.shape, memory_3d.shape)
-                    memory = support_memory.reshape(-1, support_memory.size(2),
-                                                    support_memory.size(3))  # [4096*Support_size, Batch_size, 64]
-                    memory_pos_enc = support_memory_pos_enc.reshape(-1, support_memory_pos_enc.size(2),
-                                                                    support_memory_pos_enc.size(3))
+                    L = len(memory_bank_feats)
+                    memory_stack_ori = torch.stack(memory_bank_feats, dim=0)
+                    memory_pos_stack_ori = torch.stack(memory_bank_pos_enc, dim=0)
+                    memory_3d = memory_stack_ori.flatten(3).permute(0, 3, 1, 2)
+                    memory_pos_3d = memory_pos_stack_ori.flatten(3).permute(0, 3, 1, 2)
+                    memory = torch.cat([support_memory, memory_3d], dim=0)
+                    memory_pos_enc = torch.cat([support_memory_pos_enc, memory_pos_3d], dim=0)
+                    memory = memory.reshape(-1, memory.size(2), memory.size(3))  # [4096*Support_size, Batch_size, 64]
+                    memory_pos_enc = memory_pos_enc.reshape(-1, memory_pos_enc.size(2), memory_pos_enc.size(3))
+                    # # print(memory.shape, support_memory.shape, memory_3d.shape)
+                    # memory = support_memory.reshape(-1, support_memory.size(2),
+                    #                                 support_memory.size(3))  # [4096*Support_size, Batch_size, 64]
+                    # memory_pos_enc = support_memory_pos_enc.reshape(-1, support_memory_pos_enc.size(2),
+                    #                                                 support_memory_pos_enc.size(3))
 
 
                 vision_feats[-1] = net.sam.memory_attention(

@@ -296,7 +296,7 @@ class CAMUS(Dataset):
 
         img = Image.fromarray(nib.load(img_path).get_fdata()).convert('RGB')
         mask = nib.load(msk_path).get_fdata()
-        mask[mask != 2] = 0
+        mask[mask != 1] = 0
         mask[mask>0]=1
 
         if self.prompt == 'click':
