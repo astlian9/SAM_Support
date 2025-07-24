@@ -467,14 +467,14 @@ def random_box_gai(mask):
     mask = mask.squeeze(1) > 0.5
     batch_size = mask.size(0)
     bounding_boxes = torch.zeros((batch_size, 4))
-    bounding_boxes[:,1] = 1023
-    bounding_boxes[:,3] = 1023
+    bounding_boxes[:, 2] = 1023
+    bounding_boxes[:, 3] = 1023
     for i in range(batch_size):
         if torch.max(mask[i]) > 0:
-            indices = mask[i].nonzero(as_tuple = True)
+            indices = mask[i].nonzero(as_tuple=True)
             y_min, x_min = torch.min(indices[0]), torch.min(indices[1])
             y_max, x_max = torch.max(indices[0]), torch.max(indices[1])
-            bounding_boxes[i] = torch.tensor([x_min, x_max, y_min, y_max])
+            bounding_boxes[i] = torch.tensor([x_min, y_min, x_max, y_max])
 
     return bounding_boxes
 

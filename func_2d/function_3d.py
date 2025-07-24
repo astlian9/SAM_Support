@@ -8,6 +8,7 @@ from tqdm import tqdm
 import cfg
 from conf import settings
 from func_2d.utils import *
+from func_3d.utils import generate_box_new
 import pandas as pd
 
 # args = cfg.parse_args()
@@ -173,7 +174,7 @@ def train_sam(args, net: nn.Module, optimizer, train_loader, support_loader, epo
                     '''generate pseudo mask'''
                     y_0_pred = F.interpolate(y_0, size=(args.out_size, args.out_size))
                     '''generate box prompt'''
-                    box_corordinates = random_box_gai((y_0_pred > 0.5).float()).cuda()
+                    box_corordinates = generate_box_new((y_0_pred > 0.5).float()).cuda()
                     se, de = net.sam.sam_prompt_encoder(
                         points=None,  # (coords_torch, labels_torch)
                         boxes=box_corordinates,
@@ -441,7 +442,7 @@ def validation_sam(args, val_loader, support_loader, epoch, net: nn.Module, clea
                         '''generate pseudo mask'''
                         y_0_pred = F.interpolate(y_0, size=(args.out_size, args.out_size))
                         '''generate box prompt'''
-                        box_corordinates = random_box_gai((y_0_pred > 0.5).float()).cuda()
+                        box_corordinates = generate_box_new((y_0_pred > 0.5).float()).cuda()
                         se, de = net.sam.sam_prompt_encoder(
                             points=None,  # (coords_torch, labels_torch)
                             boxes=box_corordinates,
