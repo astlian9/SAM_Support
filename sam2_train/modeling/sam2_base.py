@@ -11,8 +11,9 @@ import torch.nn.functional as F
 from torch.nn.init import trunc_normal_
 
 from sam2_train.modeling.sam.mask_decoder import MaskDecoder
+from sam2_train.modeling.sam.mask_decoder_h import MaskDecoder2_512
 from sam2_train.modeling.sam.prompt_encoder import PromptEncoder
-from sam2_train.modeling.sam.transformer import TwoWayTransformer
+from sam2_train.modeling.sam.transformer import TwoWayTransformer, TwoWayTransformer2
 from sam2_train.modeling.sam2_utils import get_1d_sine_pe, MLP, select_closest_cond_frames
 
 # a large negative value as a placeholder score for missing objects
@@ -232,6 +233,19 @@ class SAM2Base(torch.nn.Module):
             use_multimask_token_for_obj_ptr=self.use_multimask_token_for_obj_ptr,
             **(self.sam_mask_decoder_extra_args or {}),
         )
+        self.mask_decoder2=MaskDecoder2_512(
+                # num_multimask_outputs=3,
+                num_multimask_outputs=3,
+                transformer2=TwoWayTransformer2(
+                    depth=2,
+                    embedding_dim=self.sam_prompt_embed_dim,
+                    mlp_dim=2048,
+                    num_heads=8,
+                ),
+                transformer_dim=self.sam_prompt_embed_dim,
+                iou_head_depth=3,
+                iou_head_hidden_dim=256,
+            )
         if self.use_obj_ptrs_in_encoder:
             # a linear projection on SAM output tokens to turn them into object pointers
             self.obj_ptr_proj = torch.nn.Linear(self.hidden_dim, self.hidden_dim)

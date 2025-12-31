@@ -163,24 +163,24 @@ def train_sam(args, net: nn.Module, optimizer, train_loader, support_loader, epo
                         masks=None,
                         batch_size=B,
                     )
-                    y_0 = net.sam.sam_mask_decoder(
-                        image_embeddings=image_embed,
-                        image_pe=net.sam.sam_prompt_encoder.get_dense_pe(),
-                        sparse_prompt_embeddings=se,
-                        dense_prompt_embeddings=de,
-                        multimask_output=False,  # args.multimask_output if you want multiple masks
-                        repeat_image=False,  # the image is already batched
-                        high_res_features=high_res_feats)[0]
-                    '''generate pseudo mask'''
-                    y_0_pred = F.interpolate(y_0, size=(args.out_size, args.out_size))
-                    '''generate box prompt'''
-                    box_corordinates = generate_box_new((y_0_pred > 0.5).float()).cuda()
-                    se, de = net.sam.sam_prompt_encoder(
-                        points=None,  # (coords_torch, labels_torch)
-                        boxes=box_corordinates,
-                        masks=None,
-                        batch_size=B,
-                    )
+                y_0, iou_pred_0, sam_token_out, object_pred_logit,msk_feat, up_embed = net.sam.sam_mask_decoder(
+                    image_embeddings=image_embed,
+                    image_pe=net.sam.sam_prompt_encoder.get_dense_pe(),
+                    sparse_prompt_embeddings=se,
+                    dense_prompt_embeddings=de,
+                    multimask_output=False,  # args.multimask_output if you want multiple masks
+                    repeat_image=False,  # the image is already batched
+                    high_res_features=high_res_feats)
+                '''generate pseudo mask'''
+                y_0_pred = F.interpolate(y_0, size=(args.out_size, args.out_size))
+                '''generate box prompt'''
+                box_corordinates = generate_box_new((y_0_pred > 0.5).float()).cuda()
+                se, de = net.sam.sam_prompt_encoder(
+                    points=None,  # (coords_torch, labels_torch)
+                    boxes=box_corordinates,
+                    masks=None,
+                    batch_size=B,
+                )
                 # dimension hint for your future use
                 # se: torch.Size([batch, n+1, 256])
                 # de: torch.Size([batch, 256, 64, 64])
@@ -217,14 +217,25 @@ def train_sam(args, net: nn.Module, optimizer, train_loader, support_loader, epo
                 # high_res_feats = feats[:-1]
 
                 '''train mask decoder'''
-                low_res_multimasks, iou_predictions, sam_output_tokens, object_score_logits = net.sam.sam_mask_decoder(
+                # low_res_multimasks, iou_predictions, sam_output_tokens, object_score_logits = net.sam.sam_mask_decoder(
+                #     image_embeddings=image_embed,
+                #     image_pe=net.sam.sam_prompt_encoder.get_dense_pe(),
+                #     sparse_prompt_embeddings=se,
+                #     dense_prompt_embeddings=de,
+                #     multimask_output=False,  # args.multimask_output if you want multiple masks
+                #     repeat_image=False,  # the image is already batched
+                #     high_res_features=high_res_feats
+                # )
+
+                low_res_masks2, iou_predictions2, attn1 = net.sam.mask_decoder2(
                     image_embeddings=image_embed,
                     image_pe=net.sam.sam_prompt_encoder.get_dense_pe(),
                     sparse_prompt_embeddings=se,
                     dense_prompt_embeddings=de,
-                    multimask_output=False,  # args.multimask_output if you want multiple masks
-                    repeat_image=False,  # the image is already batched
-                    high_res_features=high_res_feats
+                    multimask_output=False,
+                    mask_feat=F.interpolate((y_0 > 0.5).float(), size=(64, 64), mode='bilinear'),
+                    msk_feat=msk_feat,
+                    up_embed=up_embed
                 )
                 # dimension hint for your future use
                 # low_res_multimasks: torch.Size([batch, multimask_output, 256, 256])
@@ -232,16 +243,20 @@ def train_sam(args, net: nn.Module, optimizer, train_loader, support_loader, epo
                 # sam_output_tokens.shape:torch.Size([batch, multimask_output, 256])
                 # object_score_logits.shape:torch.Size([batch, 1])
                 # resize prediction
-                pred = F.interpolate(low_res_multimasks, size=(args.out_size, args.out_size))
+                # pred = F.interpolate(low_res_multimasks, size=(args.out_size, args.out_size))
+                pred = F.interpolate(low_res_masks2[:, :1, :, :], size=(args.out_size, args.out_size))
                 # y_0_pred = F.interpolate(y_0,size=(args.out_size,args.out_size))
-                high_res_multimasks = F.interpolate(low_res_multimasks, size=(args.image_size, args.image_size),
+                # high_res_multimasks = F.interpolate(low_res_multimasks, size=(args.image_size, args.image_size),
+                #                                     mode="bilinear", align_corners=False)
+                high_res_multimasks = F.interpolate(low_res_masks2[:, :1, :, :], size=(args.image_size, args.image_size),
                                                     mode="bilinear", align_corners=False)
 
                 # backpropagation
                 y_0_mask = torch.log(torch.sigmoid((y_0_pred > 0.5).float()) + 1e-10)
                 pred_mask = (pred > 0.5).float()
-                loss_slice = lossfunc(pred, masks)
-                + 0.005 * F.kl_div(y_0_mask, pred_mask, reduction='batchmean')
+                loss_weight = 0.5 * (0.95 ** epoch)
+                loss_slice = (1-loss_weight)*lossfunc(pred, masks)
+                + loss_weight * F.kl_div(y_0_mask, masks, reduction='batchmean')
                 pbar.set_postfix(**{'loss (batch)': loss_slice.item()})
                 loss += loss_slice
                 epoch_loss += loss_slice.item()
@@ -431,14 +446,14 @@ def validation_sam(args, val_loader, support_loader, epoch, net: nn.Module, clea
                             masks=None,
                             batch_size=B,
                         )
-                        y_0 = net.sam.sam_mask_decoder(
+                        y_0 , iou_pred_0, sam_token_out, object_pred_logit,msk_feat, up_embed= net.sam.sam_mask_decoder(
                             image_embeddings=image_embed,
                             image_pe=net.sam.sam_prompt_encoder.get_dense_pe(),
                             sparse_prompt_embeddings=se,
                             dense_prompt_embeddings=de,
                             multimask_output=False,  # args.multimask_output if you want multiple masks
                             repeat_image=False,  # the image is already batched
-                            high_res_features=high_res_feats)[0]
+                            high_res_features=high_res_feats)
                         '''generate pseudo mask'''
                         y_0_pred = F.interpolate(y_0, size=(args.out_size, args.out_size))
                         '''generate box prompt'''
@@ -486,21 +501,36 @@ def validation_sam(args, val_loader, support_loader, epoch, net: nn.Module, clea
                     # high_res_feats = feats[:-1]
 
                     '''train mask decoder'''
-                    low_res_multimasks, iou_predictions, sam_output_tokens, object_score_logits = net.sam.sam_mask_decoder(
+                    # low_res_multimasks, iou_predictions, sam_output_tokens, object_score_logits = net.sam.sam_mask_decoder(
+                    #     image_embeddings=image_embed,
+                    #     image_pe=net.sam.sam_prompt_encoder.get_dense_pe(),
+                    #     sparse_prompt_embeddings=se,
+                    #     dense_prompt_embeddings=de,
+                    #     multimask_output=False,  # args.multimask_output if you want multiple masks
+                    #     repeat_image=False,  # the image is already batched
+                    #     high_res_features=high_res_feats
+                    # )
+
+                    low_res_masks2, iou_predictions2, attn1 = net.sam.mask_decoder2(
                         image_embeddings=image_embed,
                         image_pe=net.sam.sam_prompt_encoder.get_dense_pe(),
                         sparse_prompt_embeddings=se,
                         dense_prompt_embeddings=de,
-                        multimask_output=False,  # args.multimask_output if you want multiple masks
-                        repeat_image=False,  # the image is already batched
-                        high_res_features=high_res_feats
+                        multimask_output=False,
+                        mask_feat=F.interpolate((y_0 > 0.5).float(), size=(64, 64), mode='bilinear'),
+                        msk_feat=msk_feat,
+                        up_embed=up_embed
                     )
 
 
                     # prediction
-                    pred = F.interpolate(low_res_multimasks, size=(args.out_size, args.out_size))
-                    high_res_multimasks = F.interpolate(low_res_multimasks, size=(args.image_size, args.image_size),
-                                                    mode="bilinear", align_corners=False)
+                    # pred = F.interpolate(low_res_multimasks, size=(args.out_size, args.out_size))
+                    pred = F.interpolate(low_res_masks2[:, :1, :, :], size=(args.out_size, args.out_size))
+                    # high_res_multimasks = F.interpolate(low_res_multimasks, size=(args.image_size, args.image_size),
+                    #                                 mode="bilinear", align_corners=False)
+                    high_res_multimasks = F.interpolate(low_res_masks2[:, :1, :, :],
+                                                        size=(args.image_size, args.image_size),
+                                                        mode="bilinear", align_corners=False)
 
                     # binary mask and calculate loss, iou, dice
                     total_loss += lossfunc(pred, masks)

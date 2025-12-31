@@ -65,7 +65,8 @@ def main():
     logger = create_logger(args.path_helper['log_path'])
     logger.info(args)
 
-
+    IMAGENET_MEAN = (0.485, 0.456, 0.406)
+    IMAGENET_STD = (0.229, 0.224, 0.225)
     '''segmentation data'''
     transform_train = transforms.Compose([
         # transforms.RandomHorizontalFlip(p=0.5),  # Randomly flip images horizontally
@@ -74,11 +75,13 @@ def main():
         # transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
         transforms.Resize((args.image_size,args.image_size)),
         transforms.ToTensor(),
+        # transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
     ])
 
     transform_test = transforms.Compose([
         transforms.Resize((args.image_size, args.image_size)),
         transforms.ToTensor(),
+        # transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
     ])
 
     transform_mask = transforms.Compose([
@@ -154,8 +157,10 @@ def main():
 
     if args.dataset == 'WBC':
         '''REFUGE data'''
-        wbc_train_dataset = WBC(args, args.data_path, transform = transform_train, mode = 'Training')
-        wbc_test_dataset = WBC(args, args.data_path, transform = transform_test, mode = 'Testing')
+        wbc_train_dataset = WBC(args, args.data_path, transform = transform_train, transform_msk = transform_mask,
+                                mode = 'Training')
+        wbc_test_dataset = WBC(args, args.data_path, transform = transform_test, transform_msk = transform_mask,
+                               mode = 'Testing')
 
         dataset_size = len(wbc_train_dataset)
         indices = list(range(dataset_size))
@@ -165,7 +170,7 @@ def main():
         train_sampler = SubsetRandomSampler(indices[split_val:])
         support_sampler = SubsetRandomSampler(indices[:split_support])
         val_sampler = SubsetRandomSampler(indices[split_support:split_val])
-        nice_train_loader = DataLoader(wbc_train_dataset, batch_size=args.b, sampler=train_sampler, num_workers=2, pin_memory=True)
+        nice_train_loader = DataLoader(wbc_train_dataset, batch_size=args.b, sampler=train_sampler, num_workers=8, pin_memory=True)
         nice_support_loader = DataLoader(wbc_train_dataset, batch_size=split_support,  sampler=support_sampler, num_workers=2, pin_memory=False)
         nice_test_loader = DataLoader(wbc_test_dataset, batch_size=args.b, shuffle=False, num_workers=2, pin_memory=True)
         nice_val_loader = DataLoader(wbc_train_dataset, batch_size=args.b, sampler=val_sampler, num_workers=2, pin_memory=True)
@@ -210,7 +215,7 @@ def main():
         support_sampler = SubsetRandomSampler(indices[:split_support])
         val_sampler = SubsetRandomSampler(indices[split_support: split_val])
         test_sampler = SubsetRandomSampler(indices[split_val:split_test])
-        nice_train_loader = DataLoader(stare_train_dataset, batch_size=args.b, sampler=train_sampler, num_workers=2, pin_memory=False)
+        nice_train_loader = DataLoader(stare_train_dataset, batch_size=args.b, sampler=train_sampler, num_workers=8, pin_memory=False)
         nice_support_loader = DataLoader(stare_train_dataset, batch_size=split_support,  sampler=support_sampler, num_workers=2, pin_memory=False)
         nice_val_loader = DataLoader(stare_train_dataset, batch_size=args.b,  sampler=val_sampler, num_workers=2, pin_memory=False)
         nice_test_loader = DataLoader(stare_train_dataset, batch_size=args.b, sampler=test_sampler, num_workers=2, pin_memory=False)
@@ -278,6 +283,9 @@ def main():
 
             tol, (eiou, edice) = function.validation_sam(args, nice_val_loader, nice_support_loader, epoch, net, writer)
             logger.info(f'Val score: {tol}, IOU: {eiou}, DICE: {edice} || @ epoch {epoch}.')
+            # train_tol, (train_eiou, train_edice) = function.validation_sam(args, nice_train_loader, nice_support_loader, epoch, net,
+            #                                              writer)
+            # logger.info(f'Train score: {train_tol}, IOU: {train_eiou}, DICE: {train_edice} || @ epoch {epoch}.')
 
             if args.distributed != 'none':
                 sd = net.module.state_dict()
@@ -305,10 +313,10 @@ def main():
     checkpoint_final = torch.load(os.path.join(args.path_helper['ckpt_path'],'best_dice_checkpoint.pth'))
     net.load_state_dict(checkpoint_final['state_dict'])
     net.eval()
-    epoch=99
-    tol, (eiou, edice) = function.validation_sam(args, nice_test_loader, nice_support_loader, epoch, net, writer)
-    logger.info(f'Test score: {tol}, IOU: {eiou}, DICE: {edice} || @ epoch {epoch}.')
-    tol, (eiou, edice) = function.validation_sam(args, nice_train_loader, nice_support_loader, epoch, net, writer)
+    # epoch=99
+    # tol, (eiou, edice) = function.validation_sam(args, nice_test_loader, nice_support_loader, epoch, net, writer)
+    # logger.info(f'Test score: {tol}, IOU: {eiou}, DICE: {edice} || @ epoch {epoch}.')
+    # tol, (eiou, edice) = function.validation_sam(args, nice_train_loader, nice_support_loader, epoch, net, writer)
     writer.close()
 
 

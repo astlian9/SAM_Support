@@ -1,6 +1,5 @@
 """ train and test dataset
 
-author jundewu
 """
 import os
 import glob
@@ -251,7 +250,7 @@ class WBC(Dataset):
             img = self.transform(img)
             torch.set_rng_state(state)
             mask = Image.fromarray(mask)
-            mask = self.transform(mask).int()
+            mask = self.transform_msk(mask).int()
 
             # if (inout == 0 and point_label == 1) or (inout == 1 and point_label == 0):
             #     mask = 1 - mask
