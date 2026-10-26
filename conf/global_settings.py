@@ -8,7 +8,7 @@ from datetime import datetime
 CHECKPOINT_PATH = '/home/yxing2/SAM2runs/checkpoint'
 
 #total training epoches
-EPOCH = 100
+EPOCH = 200
 step_size = 10
 i = 1
 MILESTONES = []

@@ -27,6 +27,11 @@ def parse_args():
     parser.add_argument('-sam_ckpt', type=str, default=None , help='sam checkpoint address')
     parser.add_argument('-sam_config', type=str, default=None , help='sam checkpoint address')
     parser.add_argument('-video_length', type=int, default=8, help='sam checkpoint address')
+    parser.add_argument(
+        '-reverse_propagation',
+        action='store_true',
+        help='Process 3D query slices from last to first during training and evaluation',
+    )
     parser.add_argument('-epoch', type=int, default=0, help='starting epoch')
     parser.add_argument('-b', type=int, default=1, help='batch size for dataloader')
     parser.add_argument('-lr', type=float, default=1e-3, help='initial learning rate')

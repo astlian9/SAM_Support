@@ -94,7 +94,8 @@ class PETCT(Dataset):
         # img = transforms.functional.adjust_gamma(img*255, gamma=0.5) /255
         mask = mask.unsqueeze(1)
         img = F.interpolate(img, size=(self.img_size, self.img_size), mode='bilinear', align_corners=False)
-        mask = F.interpolate(mask, size=(self.out_size, self.out_size), mode='bilinear', align_corners=False)
+        mask = F.interpolate(mask.float(), size=(self.out_size, self.out_size), mode='nearest')
+        mask = (mask >= 0.5).float()
 
         point_label, pt = random_click(np.array(mask) / 255, point_label)
 

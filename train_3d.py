@@ -17,19 +17,21 @@ from sam_lora_image_encoder import LoRA_Sam
 from func_2d.dataset import *
 from func_2d.utils import *
 from func_3d.dataset import get_dataloader
-from evaluate_3d import evaluate_sam
 
 
-def main():
-    # use bfloat16 for the entire work
-    torch.autocast(device_type="cuda", dtype=torch.bfloat16).__enter__()
-
+def main(evaluate_only=False):
     if torch.cuda.get_device_properties(0).major >= 8:
         # turn on tfloat32 for Ampere GPUs (https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices)
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
 
     args = cfg.parse_args()
+    if args.image_size != 1024 or args.out_size != 1024:
+        raise ValueError(
+            "The 3D pipeline requires -image_size 1024 -out_size 1024."
+        )
+    if evaluate_only and args.weights == 0:
+        raise ValueError("Evaluation requires -weights pointing to a trained checkpoint.")
     GPUdevice = torch.device('cuda', args.gpu_device)
     torch.cuda.set_device(GPUdevice)
 
@@ -39,10 +41,16 @@ def main():
         net.load_state_dict(weights, strict=False)
 
     net = LoRA_Sam(net, 16)
+    if (
+        net.sam.image_size != 1024
+        or net.sam.sam_prompt_encoder.input_image_size != (1024, 1024)
+    ):
+        raise ValueError("The SAM2 configuration must use a 1024x1024 input.")
     net.to(device=GPUdevice)
     # optimisation
-    optimizer = optim.Adam(net.parameters(), lr=args.lr, betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False)
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.8)
+    if not evaluate_only:
+        optimizer = optim.Adam(net.parameters(), lr=args.lr, betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False)
+        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.8)
 
     '''load pretrained model'''
     if args.weights != 0:
@@ -56,7 +64,8 @@ def main():
         best_tol = checkpoint['best_tol']
 
         net.load_state_dict(checkpoint['state_dict'], strict=True)
-        optimizer.load_state_dict(checkpoint['optimizer'], strict=False)
+        if not evaluate_only:
+            optimizer.load_state_dict(checkpoint['optimizer'], strict=False)
 
         args.path_helper = checkpoint['path_helper']
         logger = create_logger(args.path_helper['log_path'])
@@ -80,6 +89,19 @@ def main():
     '''load data'''
     nice_train_loader, nice_test_loader, nice_support_loader, nice_val_loader = get_dataloader(args)
 
+    if evaluate_only:
+        net.eval()
+        epoch = checkpoint['epoch']
+        for split_name, loader in (("Val", nice_val_loader), ("Test", nice_test_loader)):
+            export_dir = os.path.join(args.path_helper['sample_path'], 'Volumes', split_name)
+            tol, (eiou, edice) = function.validation_sam(
+                args, loader, nice_support_loader, epoch, net, export_dir=export_dir
+            )
+            logger.info(
+                f'{split_name} volume-mean loss: {tol}, IOU: {eiou}, DICE: {edice} || @ epoch {epoch}.'
+            )
+        return
+
     '''checkpoint path and tensorboard'''
     checkpoint_path = os.path.join(settings.CHECKPOINT_PATH, args.net, settings.TIME_NOW)
     # use tensorboard
@@ -98,7 +120,6 @@ def main():
     best_dice = 0.0
 
     for epoch in range(settings.EPOCH):
-        nice_train_loader, nice_test_loader, nice_support_loader, nice_val_loader = get_dataloader(args)
         # training
         net.train()
         time_start = time.time()
@@ -113,7 +134,7 @@ def main():
         if epoch % args.val_freq == 0 or epoch == settings.EPOCH - 1:
 
             tol, (eiou, edice) = function.validation_sam(args, nice_val_loader, nice_support_loader, epoch, net, writer)
-            logger.info(f'Val score: {tol}, IOU: {eiou}, DICE: {edice} || @ epoch {epoch}.')
+            logger.info(f'Val volume-mean loss: {tol}, IOU: {eiou}, DICE: {edice} || @ epoch {epoch}.')
 
             if args.distributed != 'none':
                 sd = net.module.state_dict()
@@ -159,7 +180,7 @@ def main():
     net.load_state_dict(checkpoint_final['state_dict'])
     net.eval()
     tol, (eiou, edice) = function.validation_sam(args, nice_test_loader, nice_support_loader, epoch, net, writer)
-    logger.info(f'Test score: {tol}, IOU: {eiou}, DICE: {edice} || @ epoch {epoch}.')
+    logger.info(f'Test volume-mean loss: {tol}, IOU: {eiou}, DICE: {edice} || @ epoch {epoch}.')
     writer.close()
 
 

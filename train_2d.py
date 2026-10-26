@@ -18,10 +18,7 @@ from func_2d.dataset import *
 from func_2d.utils import *
 
 
-def main():
-    # use bfloat16 for the entire work
-    torch.autocast(device_type="cuda", dtype=torch.bfloat16).__enter__()
-
+def main(evaluate_only=False):
     if torch.cuda.get_device_properties(0).major >= 8:
         # turn on tfloat32 for Ampere GPUs (https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices)
         torch.backends.cuda.matmul.allow_tf32 = True
@@ -29,6 +26,12 @@ def main():
 
 
     args = cfg.parse_args()
+    if args.image_size != 1024 or args.out_size != 1024:
+        raise ValueError(
+            "The 2D pipeline requires -image_size 1024 -out_size 1024."
+        )
+    if evaluate_only and args.weights == 0:
+        raise ValueError("Evaluation requires -weights pointing to a trained checkpoint.")
     GPUdevice = torch.device('cuda', args.gpu_device)
     torch.cuda.set_device(GPUdevice)
 
@@ -38,10 +41,18 @@ def main():
         net.load_state_dict(weights,strict=False)
 
     net = LoRA_Sam(net, 16)
+    if (
+        net.sam.image_size != 1024
+        or net.sam.sam_prompt_encoder.input_image_size != (1024, 1024)
+    ):
+        raise ValueError(
+            "The SAM2 configuration must use a 1024x1024 input."
+        )
     net.cuda()
     # optimisation
-    optimizer = optim.Adam(net.parameters(), lr=args.lr, betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False)
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5) 
+    if not evaluate_only:
+        optimizer = optim.Adam(net.parameters(), lr=args.lr, betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False)
+        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.8)
 
     '''load pretrained model'''
     if args.weights != 0:
@@ -55,7 +66,8 @@ def main():
         best_tol = checkpoint['best_tol']
 
         net.load_state_dict(checkpoint['state_dict'],strict=True)
-        optimizer.load_state_dict(checkpoint['optimizer'])
+        if not evaluate_only:
+            optimizer.load_state_dict(checkpoint['optimizer'])
 
         args.path_helper = checkpoint['path_helper']
         logger = create_logger(args.path_helper['log_path'])
@@ -85,7 +97,10 @@ def main():
     ])
 
     transform_mask = transforms.Compose([
-        transforms.Resize((args.out_size, args.out_size)),
+        transforms.Resize(
+            (args.out_size, args.out_size),
+            interpolation=transforms.InterpolationMode.NEAREST,
+        ),
         transforms.ToTensor(),
     ])
 
@@ -93,8 +108,8 @@ def main():
     # example of REFUGE dataset
     if args.dataset == 'REFUGE':
         '''REFUGE data'''
-        refuge_train_dataset = REFUGE(args, args.data_path, transform = transform_train, mode = 'Training')
-        refuge_test_dataset = REFUGE(args, args.data_path, transform = transform_test, mode = 'Test')
+        refuge_train_dataset = REFUGE(args, args.data_path, transform = transform_train, transform_msk=transform_mask, mode = 'Training')
+        refuge_test_dataset = REFUGE(args, args.data_path, transform = transform_test, transform_msk=transform_mask, mode = 'Test')
 
         dataset_size = len(refuge_train_dataset)
         indices = list(range(dataset_size))
@@ -109,20 +124,46 @@ def main():
         train_sampler = SubsetRandomSampler(indices[split:])
         support_sampler = SubsetRandomSampler(indices[:split])
         nice_train_loader = DataLoader(refuge_train_dataset, batch_size=args.b, sampler=train_sampler, num_workers=2, pin_memory=True)
-        nice_support_loader = DataLoader(refuge_train_dataset, batch_size=1,  sampler=support_sampler, num_workers=2, pin_memory=False)
+        nice_support_loader = DataLoader(refuge_train_dataset, batch_size=16,  sampler=support_sampler, num_workers=2, pin_memory=False)
         nice_test_loader = DataLoader(refuge_test_dataset, batch_size=args.b, sampler=test_sampler, num_workers=2, pin_memory=True)
         nice_val_loader = DataLoader(refuge_test_dataset, batch_size=args.b, sampler=val_sampler, num_workers=2,
                                       pin_memory=True)
         '''end'''
 
+    if args.dataset == 'FIVES':
+        '''REFUGE data'''
+        fives_train_dataset = FIVES(args, args.data_path, transform = transform_train, transform_msk=transform_mask, mode = 'Training')
+        fives_test_dataset = FIVES(args, args.data_path, transform = transform_test, transform_msk=transform_mask, mode = 'Testing')
+
+        dataset_size = len(fives_train_dataset)
+        indices = list(range(dataset_size))
+        split = int(np.floor(0.03 * dataset_size))
+        test_dataset_size = len(fives_test_dataset)
+        indices_test = list(range(test_dataset_size))
+        split_val = int(np.floor(0.5 * test_dataset_size))
+        np.random.shuffle(indices)
+        np.random.shuffle(indices_test)
+        val_sampler = SubsetRandomSampler(indices_test[split_val:])
+        test_sampler = SubsetRandomSampler(indices_test[:split_val])
+        train_sampler = SubsetRandomSampler(indices[split:])
+        support_sampler = SubsetRandomSampler(indices[:split])
+        nice_train_loader = DataLoader(fives_train_dataset, batch_size=args.b, sampler=train_sampler, num_workers=2, pin_memory=True)
+        nice_support_loader = DataLoader(fives_train_dataset, batch_size=16,  sampler=support_sampler, num_workers=2, pin_memory=False)
+        nice_test_loader = DataLoader(fives_test_dataset, batch_size=args.b, sampler=test_sampler, num_workers=2, pin_memory=True)
+        nice_val_loader = DataLoader(fives_test_dataset, batch_size=args.b, sampler=val_sampler, num_workers=2,
+                                      pin_memory=True)
+        '''end'''
+
+
     if args.dataset == 'STARE':
         '''REFUGE data'''
-        stare_train_dataset = STARE(args, args.data_path, transform = transform_train)
+        stare_train_dataset = STARE(args, args.data_path, transform = transform_train, transform_msk=transform_mask)
 
         dataset_size = len(stare_train_dataset)
         indices = list(range(dataset_size))
         split_support = int(np.floor(0.05 * dataset_size))
-        split_test = int(np.floor(0.25 * dataset_size))
+        split_test = int(np.floor(0.2 * dataset_size))
+        split_val = int(np.floor(0.1 * dataset_size))
         np.random.shuffle(indices)
         train_sampler = SubsetRandomSampler(indices[split_test:])
         support_sampler = SubsetRandomSampler(indices[:split_support])
@@ -130,11 +171,13 @@ def main():
         nice_train_loader = DataLoader(stare_train_dataset, batch_size=args.b, sampler=train_sampler, num_workers=2, pin_memory=True)
         nice_support_loader = DataLoader(stare_train_dataset, batch_size=1,  sampler=support_sampler, num_workers=2, pin_memory=False)
         nice_test_loader = DataLoader(stare_train_dataset, batch_size=args.b, sampler=test_sampler, num_workers=2, pin_memory=True)
+        nice_val_loader = DataLoader(stare_train_dataset, batch_size=args.b, sampler=test_sampler, num_workers=2,
+                                      pin_memory=True)
         '''end'''
 
     if args.dataset == 'Pandental':
         '''Pandental data'''
-        stare_train_dataset = Pendal(args, args.data_path, transform = transform_train)
+        stare_train_dataset = Pendal(args, args.data_path, transform = transform_train, transform_msk=transform_mask)
 
         dataset_size = len(stare_train_dataset)
         indices = list(range(dataset_size))
@@ -178,7 +221,7 @@ def main():
 
     if args.dataset == 'CAMUS':
         '''Pandental data'''
-        stare_train_dataset = CAMUS(args, args.data_path, transform = transform_train)
+        stare_train_dataset = CAMUS(args, args.data_path, transform = transform_train, transform_msk=transform_mask)
 
         dataset_size = len(stare_train_dataset)
         indices = list(range(dataset_size))
@@ -203,7 +246,7 @@ def main():
 
     if args.dataset == 'BUSI':
         '''Pandental data'''
-        stare_train_dataset = BUSI(args, args.data_path, transform = transform_train)
+        stare_train_dataset = BUSI(args, args.data_path, transform = transform_train, transform_msk=transform_mask)
 
         dataset_size = len(stare_train_dataset)
         indices = list(range(dataset_size))
@@ -244,6 +287,16 @@ def main():
         nice_val_loader = DataLoader(stare_train_dataset, batch_size=args.b, sampler=val_sampler, num_workers=2,
                                      pin_memory=True)
 
+    if evaluate_only:
+        net.eval()
+        epoch = checkpoint['epoch']
+        for split_name, loader in (("Val", nice_val_loader), ("Test", nice_test_loader)):
+            tol, (eiou, edice) = function.validation_sam(
+                args, loader, nice_support_loader, epoch, net
+            )
+            logger.info(f'{split_name} score: {tol}, IOU: {eiou}, DICE: {edice} || @ epoch {epoch}.')
+        return
+
     '''checkpoint path and tensorboard'''
     checkpoint_path = os.path.join(settings.CHECKPOINT_PATH, args.net, settings.TIME_NOW)
     #use tensorboard
@@ -271,6 +324,7 @@ def main():
         loss = function.train_sam(args, net, optimizer, nice_train_loader, nice_support_loader, epoch, writer)
         logger.info(f'Train loss: {loss} || @ epoch {epoch}.')
         time_end = time.time()
+        scheduler.step()
         print('time_for_training ', time_end - time_start)
         # if epoch==0:
         #     tol, (eiou, edice) = function.validation_sam(args, nice_test_loader, nice_support_loader, epoch, net,
@@ -313,9 +367,9 @@ def main():
     checkpoint_final = torch.load(os.path.join(args.path_helper['ckpt_path'],'best_dice_checkpoint.pth'))
     net.load_state_dict(checkpoint_final['state_dict'])
     net.eval()
-    # epoch=99
-    # tol, (eiou, edice) = function.validation_sam(args, nice_test_loader, nice_support_loader, epoch, net, writer)
-    # logger.info(f'Test score: {tol}, IOU: {eiou}, DICE: {edice} || @ epoch {epoch}.')
+    epoch=99
+    tol, (eiou, edice) = function.validation_sam(args, nice_test_loader, nice_support_loader, epoch, net, writer)
+    logger.info(f'Test score: {tol}, IOU: {eiou}, DICE: {edice} || @ epoch {epoch}.')
     # tol, (eiou, edice) = function.validation_sam(args, nice_train_loader, nice_support_loader, epoch, net, writer)
     writer.close()
 

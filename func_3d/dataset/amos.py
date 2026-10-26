@@ -68,7 +68,7 @@ class AMOS(Dataset):
             else:
                 start_frame = np.random.randint(0,len(self.index[self.index['id']==name]) - video_length+1)
         if self.mode == 'Testing':
-            video_length = min(len(self.index[self.index['id']==name]),55)
+            video_length = min(len(self.index[self.index['id']==name]),210)
             # video_length = 30
             start_frame = 0
         img_file_list = self.index[self.index['id']==name]['image_name'].to_list()
@@ -92,7 +92,8 @@ class AMOS(Dataset):
         mask = torch.from_numpy(mask)
         mask = mask.unsqueeze(1)
         img = F.interpolate(img, size=(self.img_size, self.img_size), mode='bilinear', align_corners=False)
-        mask = F.interpolate(mask, size=(self.out_size, self.out_size), mode='bilinear', align_corners=False)
+        mask = F.interpolate(mask.float(), size=(self.out_size, self.out_size), mode='nearest')
+        mask = (mask >= 0.5).float()
 
         point_label, pt = random_click(np.array(mask), 1)
 
@@ -103,7 +104,7 @@ class AMOS(Dataset):
             mask = Image.fromarray(mask)
             mask = self.transform(mask).int()
 
-        image_meta_dict = {'filename_or_obj': name_list}
+        image_meta_dict = {'filename_or_obj': name_list[0]}
         return {
             'image': img,
             'mask': mask,

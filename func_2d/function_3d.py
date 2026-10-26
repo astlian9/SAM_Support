@@ -1,580 +1,390 @@
+import logging
+import math
 import os
 
+import nibabel as nib
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from tqdm import tqdm
+from monai.metrics import compute_hausdorff_distance
 
-import cfg
-from conf import settings
-from func_2d.utils import *
+from func_2d.utils import vis_image
 from func_3d.utils import generate_box_new
-import pandas as pd
 
-# args = cfg.parse_args()
-#
-# GPUdevice = torch.device('cuda', args.device)
-# pos_weight = torch.ones([1]).cuda(device=GPUdevice) * 2
-# criterion_G = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-# mask_type = torch.float32
-#
 torch.backends.cudnn.benchmark = True
 
 
 def train_sam(args, net: nn.Module, optimizer, train_loader, support_loader, epoch):
-    # use bfloat16 for the entire notebook
-    torch.autocast(device_type="cuda", dtype=torch.bfloat16).__enter__()
-
-    if torch.cuda.get_device_properties(0).major >= 8:
-        # turn on tfloat32 for Ampere GPUs (https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices)
+    if torch.cuda.get_device_properties(args.gpu_device).major >= 8:
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
 
-    # train mode
-    net.train()
-    optimizer.zero_grad()
-
-    GPUdevice = torch.device('cuda',args.gpu_device)
-    pos_weight = torch.ones([1]).cuda(device=GPUdevice) * 2
-    criterion_G = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-    mask_type=torch.float32
-
-    # init
-    epoch_loss = 0
-    memory_bank_list = []
-    lossfunc = criterion_G
-    highres_size = args.image_size // 4
-    feat_sizes = [(highres_size // (2**k), highres_size // (2**k))  for k in range(3)]
-    # feat_sizes = [(256, 256), (128, 128), (64, 64)]
-
-    with tqdm(total=len(train_loader), desc=f'Epoch {epoch}', unit='img') as pbar:
-        for ind, pack in enumerate(train_loader):
-
-            # input image and gt masks
-            imgs_input = pack['image'].to(dtype=mask_type, device=GPUdevice)
-            # support_imgs = imgs[0:1].to(dtype = mask_type, device = GPUdevice)
-            # imgs = imgs[1:].to(dtype = mask_type, device = GPUdevice)
-            masks_input = pack['mask'].to(dtype=mask_type, device=GPUdevice)
-            # support_masks = masks[0:1].to(dtype = mask_type, device = GPUdevice)
-            # masks = masks[1:].to(dtype = mask_type, device = GPUdevice)
-            support_data = next(iter(support_loader))
-            support_imgs = support_data['image'][0].to(dtype=mask_type, device=GPUdevice)
-            support_masks = support_data['mask'][0].to(dtype=mask_type, device=GPUdevice)
-            name = pack['image_meta_dict']['filename_or_obj']
-            # print(imgs_input.shape, masks_input.shape, support_imgs.shape, support_masks.shape)
-            '''generate support embeddings'''
-            support_backbone_out = net.sam.forward_image(support_imgs)
-            _, support_vision_feats, support_vision_pos_embeds, _ = net.sam._prepare_backbone_features(
-                support_backbone_out)
-            '''encode support mask into support embeddings'''
-            high_res_supportmasks = F.interpolate(support_masks, size=(args.image_size, args.image_size),
-                                                  mode="bilinear", align_corners=False)
-            supportmem_features, supportmem_pos_enc = net.sam._encode_new_memory(
-                current_vision_feats=support_vision_feats,
-                feat_sizes=feat_sizes,
-                pred_masks_high_res=high_res_supportmasks,
-                is_mask_from_pts=True)
-            # dimension hint for your future use
-            # maskmem_features: torch.Size([batch, 64, 64, 64])
-            # maskmem_pos_enc: [torch.Size([batch, 64, 64, 64])]
-            supportmem_features = supportmem_features.to(dtype=torch.bfloat16)
-            supportmem_features = supportmem_features.to(device=GPUdevice, non_blocking=True)  # [Support_set, 64, 64, 64]
-            supportmem_pos_enc = supportmem_pos_enc[0].to(dtype=torch.bfloat16)  # [Support_set, 64, 64, 64]
-            supportmem_pos_enc = supportmem_pos_enc.to(device=GPUdevice, non_blocking=True)
-            support_vision_feats_temp = support_vision_feats[-1].permute(1, 0, 2).reshape(
-                support_vision_feats[-1].size(1), -1, 64, 64)
-            support_vision_feats_temp = F.normalize(
-                support_vision_feats_temp.reshape(support_vision_feats[-1].size(1), -1)).cuda()
-
-            length_3d= imgs_input.size(1)
-            memory_bank_feats = []
-            memory_bank_pos_enc = []
-            loss = 0
-            for i in range(length_3d):
-                imgs = imgs_input[:, i, ...]
-                masks = masks_input[:, i, ...]
-
-                '''Train image encoder'''
-                backbone_out = net.sam.forward_image(imgs)
-                _, vision_feats, vision_pos_embeds, _ = net.sam._prepare_backbone_features(backbone_out)
-                # dimension hint for your future use
-                # vision_feats: list: length = 3
-                # vision_feats[0]: torch.Size([65536, batch, 32])
-                # vision_feats[1]: torch.Size([16384, batch, 64])
-                # vision_feats[2]: torch.Size([4096, batch, 256])
-                # vision_pos_embeds[0]: torch.Size([65536, batch, 256])
-                # vision_pos_embeds[1]: torch.Size([16384, batch, 256])
-                # vision_pos_embeds[2]: torch.Size([4096, batch, 256])
-                '''Train memory attention to condition on support image'''
-                B = vision_feats[-1].size(1)  # batch size
-                # feats[0]: torch.Size([batch, 32, 256, 256]) #high_res_feats part1
-                # feats[1]: torch.Size([batch, 64, 128, 128]) #high_res_feats part2
-                # feats[2]: torch.Size([batch, 256, 64, 64]) #image_embed
-                vision_feats_temp = vision_feats[-1].permute(1, 0, 2).reshape(B, -1, 64, 64).cuda()
-                vision_feats_temp = F.normalize(vision_feats_temp.reshape(B, -1))
-                similarity_scores = F.softmax(torch.mm(support_vision_feats_temp, vision_feats_temp.t()).t(), dim=1).cuda()
-                support_samples = torch.multinomial(similarity_scores, num_samples=args.support_size)
-                '''memory attention on support embeddings and input image feats'''
-                support_memory = supportmem_features[support_samples].flatten(3).permute(1, 3, 0, 2).cuda(
-                    non_blocking=True)  # [4096, Support_size,batch, 64]
-                support_memory_pos_enc = supportmem_pos_enc[support_samples].flatten(3).permute(1, 3, 0, 2).cuda(non_blocking=True)
-                #memory = memory.reshape(-1, memory.size(2), memory.size(3))  # [4096*Support_size, Batch_size, 64]
-                #memory_pos_enc = memory_pos_enc.reshape(-1, memory_pos_enc.size(2), memory_pos_enc.size(3))
-
-                '''memory attention on past frames'''
-                if len(memory_bank_feats) ==0:
-                    memory = support_memory.reshape(-1, support_memory.size(2), support_memory.size(3))  # [4096*Support_size, Batch_size, 64]
-                    memory_pos_enc = support_memory_pos_enc.reshape(-1, support_memory_pos_enc.size(2), support_memory_pos_enc.size(3))
-                else:
-                    L = len(memory_bank_feats)
-                    memory_stack_ori = torch.stack(memory_bank_feats, dim=0)
-                    memory_pos_stack_ori = torch.stack(memory_bank_pos_enc, dim=0)
-                    memory_3d = memory_stack_ori.flatten(3).permute(0, 3, 1, 2)
-                    memory_pos_3d = memory_pos_stack_ori.flatten(3).permute(0, 3, 1, 2)
-                    memory = torch.cat([support_memory, memory_3d], dim=0)
-                    memory_pos_enc = torch.cat([support_memory_pos_enc, memory_pos_3d], dim=0)
-                    memory = memory.reshape(-1, memory.size(2), memory.size(3))  # [4096*Support_size, Batch_size, 64]
-                    memory_pos_enc = memory_pos_enc.reshape(-1, memory_pos_enc.size(2), memory_pos_enc.size(3))
-                    # # print(memory.shape, support_memory.shape, memory_3d.shape)
-                    # memory = support_memory.reshape(-1, support_memory.size(2),
-                    #                                 support_memory.size(3))  # [4096*Support_size, Batch_size, 64]
-                    # memory_pos_enc = support_memory_pos_enc.reshape(-1, support_memory_pos_enc.size(2),
-                    #                                                 support_memory_pos_enc.size(3))
-
-
-                vision_feats[-1] = net.sam.memory_attention(
-                    curr=[vision_feats[-1]],
-                    curr_pos=[vision_pos_embeds[-1]],
-                    memory=memory,
-                    memory_pos=memory_pos_enc,
-                    num_obj_ptr_tokens=0
-                )
-
-                feats = [feat.cuda(non_blocking=True).permute(1, 2, 0).view(B, -1, *feat_size)
-                         for feat, feat_size in zip(vision_feats[::-1], feat_sizes[::-1])][::-1]
-                image_embed = feats[-1]
-                high_res_feats = feats[:-1]
-
-                with torch.no_grad():
-                    '''infer from cross attentioned feats and zero prompts'''
-                    se, de = net.sam.sam_prompt_encoder(
-                        points=None,  # (coords_torch, labels_torch)
-                        boxes=None,
-                        masks=None,
-                        batch_size=B,
-                    )
-                y_0, iou_pred_0, sam_token_out, object_pred_logit,msk_feat, up_embed = net.sam.sam_mask_decoder(
-                    image_embeddings=image_embed,
-                    image_pe=net.sam.sam_prompt_encoder.get_dense_pe(),
-                    sparse_prompt_embeddings=se,
-                    dense_prompt_embeddings=de,
-                    multimask_output=False,  # args.multimask_output if you want multiple masks
-                    repeat_image=False,  # the image is already batched
-                    high_res_features=high_res_feats)
-                '''generate pseudo mask'''
-                y_0_pred = F.interpolate(y_0, size=(args.out_size, args.out_size))
-                '''generate box prompt'''
-                box_corordinates = generate_box_new((y_0_pred > 0.5).float()).cuda()
-                se, de = net.sam.sam_prompt_encoder(
-                    points=None,  # (coords_torch, labels_torch)
-                    boxes=box_corordinates,
-                    masks=None,
-                    batch_size=B,
-                )
-                # dimension hint for your future use
-                # se: torch.Size([batch, n+1, 256])
-                # de: torch.Size([batch, 256, 64, 64])
-
-                # '''memory attention on past frames'''
-                # if len(memory_bank_feats) ==0:
-                #     vision_feats[-1] = vision_feats[-1] + torch.nn.Parameter(torch.zeros(1, B, net.sam.hidden_dim)).to(
-                #         device="cuda")
-                #     vision_pos_embeds[-1] = vision_pos_embeds[-1] + torch.nn.Parameter(
-                #         torch.zeros(1, B, net.sam.hidden_dim)).to(device="cuda")
-                # else:
-                #     L = len(memory_bank_feats)
-                #     memory_stack_ori = torch.stack(memory_bank_feats, dim=0)
-                #     memory_pos_stack_ori = torch.stack(memory_bank_pos_enc, dim=0)
-                #     memory = memory_stack_ori.flatten(3).permute(1,2,0,3)
-                #     # memory = memory.permute(2, 0, 1, 3).reshape(4096*L, B, 64)
-                #     memory_shape_temp = (highres_size//4)**2
-                #     memory = memory.permute(2, 0, 1, 3).reshape(memory_shape_temp * L, B, 64)
-                #     # memory_pos = memory_pos_stack_ori.view(L, B, 4096, 64)
-                #     memory_pos = memory_pos_stack_ori.flatten(3).permute(1, 2, 0, 3)
-                #     # memory_pos = memory_pos.permute(2, 0, 1, 3).reshape(4096*L, B, 64)
-                #     memory_pos = memory_pos.permute(2, 0, 1, 3).reshape(memory_shape_temp * L, B, 64)
-                #     vision_feats[-1] = net.sam.memory_attention(
-                #         curr=[vision_feats[-1]],
-                #         curr_pos=[vision_pos_embeds[-1]],
-                #         memory=memory,
-                #         memory_pos=memory_pos,
-                #         num_obj_ptr_tokens=0
-                #     )
-                #
-                # feats = [feat.cuda(non_blocking=True).permute(1, 2, 0).view(B, -1, *feat_size)
-                #          for feat, feat_size in zip(vision_feats[::-1], feat_sizes[::-1])][::-1]
-                # image_embed = feats[-1]
-                # high_res_feats = feats[:-1]
-
-                '''train mask decoder'''
-                # low_res_multimasks, iou_predictions, sam_output_tokens, object_score_logits = net.sam.sam_mask_decoder(
-                #     image_embeddings=image_embed,
-                #     image_pe=net.sam.sam_prompt_encoder.get_dense_pe(),
-                #     sparse_prompt_embeddings=se,
-                #     dense_prompt_embeddings=de,
-                #     multimask_output=False,  # args.multimask_output if you want multiple masks
-                #     repeat_image=False,  # the image is already batched
-                #     high_res_features=high_res_feats
-                # )
-
-                low_res_masks2, iou_predictions2, attn1 = net.sam.mask_decoder2(
-                    image_embeddings=image_embed,
-                    image_pe=net.sam.sam_prompt_encoder.get_dense_pe(),
-                    sparse_prompt_embeddings=se,
-                    dense_prompt_embeddings=de,
-                    multimask_output=False,
-                    mask_feat=F.interpolate((y_0 > 0.5).float(), size=(64, 64), mode='bilinear'),
-                    msk_feat=msk_feat,
-                    up_embed=up_embed
-                )
-                # dimension hint for your future use
-                # low_res_multimasks: torch.Size([batch, multimask_output, 256, 256])
-                # iou_predictions.shape:torch.Size([batch, multimask_output])
-                # sam_output_tokens.shape:torch.Size([batch, multimask_output, 256])
-                # object_score_logits.shape:torch.Size([batch, 1])
-                # resize prediction
-                # pred = F.interpolate(low_res_multimasks, size=(args.out_size, args.out_size))
-                pred = F.interpolate(low_res_masks2[:, :1, :, :], size=(args.out_size, args.out_size))
-                # y_0_pred = F.interpolate(y_0,size=(args.out_size,args.out_size))
-                # high_res_multimasks = F.interpolate(low_res_multimasks, size=(args.image_size, args.image_size),
-                #                                     mode="bilinear", align_corners=False)
-                high_res_multimasks = F.interpolate(low_res_masks2[:, :1, :, :], size=(args.image_size, args.image_size),
-                                                    mode="bilinear", align_corners=False)
-
-                # backpropagation
-                y_0_mask = torch.log(torch.sigmoid((y_0_pred > 0.5).float()) + 1e-10)
-                pred_mask = (pred > 0.5).float()
-                loss_weight = 0.5 * (0.95 ** epoch)
-                loss_slice = (1-loss_weight)*lossfunc(pred, masks)
-                + loss_weight * F.kl_div(y_0_mask, masks, reduction='batchmean')
-                pbar.set_postfix(**{'loss (batch)': loss_slice.item()})
-                loss += loss_slice
-                epoch_loss += loss_slice.item()
-
-                '''encode new mask and features to memory'''
-                maskmem_features_3d, maskmem_pos_enc_3d = net.sam._encode_new_memory(
-                    current_vision_feats=vision_feats,
-                    feat_sizes=feat_sizes,
-                    pred_masks_high_res=high_res_multimasks,
-                    is_mask_from_pts=False)
-                # dimension hint for your future use
-                # maskmem_features: torch.Size([batch, 64, 64, 64])
-                # maskmem_pos_enc: [torch.Size([batch, 64, 64, 64])]
-                maskmem_features_3d = maskmem_features_3d.to(torch.bfloat16)
-                maskmem_pos_enc_3d = maskmem_pos_enc_3d[0].to(torch.bfloat16)
-                ''' store it in memory bank'''
-                if len(memory_bank_feats) < args.memory_bank_size:
-                    memory_bank_feats.append(maskmem_features_3d)
-                    memory_bank_pos_enc.append(maskmem_pos_enc_3d)
-                else:
-                    memory_bank_feats.pop(0)
-                    memory_bank_pos_enc.pop(0)
-                    memory_bank_feats.append(maskmem_features_3d)
-                    memory_bank_pos_enc.append(maskmem_pos_enc_3d)
-
-            loss = loss / length_3d
-            loss.backward()
-            optimizer.step()
-
-            optimizer.zero_grad()
-
-            pbar.update()
-
-    return epoch_loss / len(train_loader)
-
-
-def validation_sam(args, val_loader, support_loader, epoch, net: nn.Module, clean_dir=True):
-    # use bfloat16 for the entire notebook
-    torch.autocast(device_type="cuda", dtype=torch.bfloat16).__enter__()
-
-    if torch.cuda.get_device_properties(0).major >= 8:
-        # turn on tfloat32 for Ampere GPUs (https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices)
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
-
-    # eval mode
-    net.eval()
-
-    GPUdevice = torch.device('cuda',args.gpu_device)
-    pos_weight = torch.ones([1]).cuda(device=GPUdevice) * 2
-    criterion_G = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-    mask_type = torch.float32
-
-    n_val = len(val_loader)
-    threshold = (0.5, 0.5, 0.5, 0.5, 0.5)
-
-    # init
-    lossfunc = criterion_G
-    memory_bank_list = []
-    # feat_sizes = [(256, 256), (128, 128), (64, 64)]
+    GPUdevice = torch.device('cuda', args.gpu_device)
+    net.sam.sam_mask_decoder.dynamic_multimask_via_stability = False
     highres_size = args.image_size // 4
     feat_sizes = [(highres_size // (2 ** k), highres_size // (2 ** k)) for k in range(3)]
-    total_loss = 0
-    total_eiou = 0
-    total_dice = 0
-    flag = 0
+    image_mean = torch.tensor(
+        [0.485, 0.456, 0.406], device=GPUdevice, dtype=torch.float32
+    ).view(1, 3, 1, 1)
+    image_std = torch.tensor(
+        [0.229, 0.224, 0.225], device=GPUdevice, dtype=torch.float32
+    ).view(1, 3, 1, 1)
+    pos_weight = torch.tensor([2.0], device=GPUdevice)
+    net.train()
+    lossfunc = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    epoch_loss = 0.0
+    n_volumes = 0
+    alpha = 0.5 * (0.95 ** epoch)
 
-    with tqdm(total=n_val, desc='Validation round', unit='batch', leave=False) as pbar:
-        for ind, pack in enumerate(val_loader):
-            # input image and gt masks
-            imgs_input = pack['image'].to(dtype=mask_type, device=GPUdevice)
-            # support_imgs = imgs[0:1].to(dtype = mask_type, device = GPUdevice)
-            # imgs = imgs[1:].to(dtype = mask_type, device = GPUdevice)
-            masks_input = pack['mask'].to(dtype=mask_type, device=GPUdevice)
-            # support_masks = masks[0:1].to(dtype = mask_type, device = GPUdevice)
-            # masks = masks[1:].to(dtype = mask_type, device = GPUdevice)
+    with tqdm(total=len(train_loader), desc=f'Epoch {epoch}', unit='batch') as pbar:
+        for pack in train_loader:
+            imgs_input = pack['image'].to(dtype=torch.float32, device=GPUdevice)
+            masks_input = pack['mask'].to(dtype=torch.float32, device=GPUdevice)
+            B, length_3d = imgs_input.shape[:2]
             support_data = next(iter(support_loader))
-            support_imgs = support_data['image'][0].to(dtype=mask_type, device=GPUdevice)
-            support_masks = support_data['mask'][0].to(dtype=mask_type, device=GPUdevice)
-            name = pack['image_meta_dict']['filename_or_obj']
-            # print(imgs_input.shape, masks_input.shape, support_imgs.shape, support_masks.shape)
-
-            '''generate support embeddings'''
-            support_backbone_out = net.sam.forward_image(support_imgs)
-            _, support_vision_feats, support_vision_pos_embeds, _ = net.sam._prepare_backbone_features(
-                support_backbone_out)
-            '''encode support mask into support embeddings'''
-            high_res_supportmasks = F.interpolate(support_masks, size=(args.image_size, args.image_size),
-                                                mode="bilinear", align_corners=False)
-            supportmem_features, supportmem_pos_enc = net.sam._encode_new_memory(
-                current_vision_feats=support_vision_feats,
-                feat_sizes=feat_sizes,
-                pred_masks_high_res=high_res_supportmasks,
-                is_mask_from_pts=True)
-            # dimension hint for your future use
-            # maskmem_features: torch.Size([batch, 64, 64, 64])
-            # maskmem_pos_enc: [torch.Size([batch, 64, 64, 64])]
-            supportmem_features = supportmem_features.to(dtype=torch.bfloat16)
-            supportmem_features = supportmem_features.to(device=GPUdevice,
-                                                         non_blocking=True)  # [Support_set, 64, 64, 64]
-            supportmem_pos_enc = supportmem_pos_enc[0].to(dtype=torch.bfloat16)  # [Support_set, 64, 64, 64]
-            supportmem_pos_enc = supportmem_pos_enc.to(device=GPUdevice, non_blocking=True)
-            support_vision_feats_temp = support_vision_feats[-1].permute(1, 0, 2).reshape(
-                support_vision_feats[-1].size(1), -1, 64, 64)
-            support_vision_feats_temp = F.normalize(
-                support_vision_feats_temp.reshape(support_vision_feats[-1].size(1), -1)).cuda()
-
-            length_3d = imgs_input.size(1)
+            support_imgs = support_data['image'].flatten(0, 1).to(dtype=torch.float32, device=GPUdevice)
+            support_masks = support_data['mask'].flatten(0, 1).to(dtype=torch.float32, device=GPUdevice)
             memory_bank_feats = []
             memory_bank_pos_enc = []
 
-            '''test'''
-            with torch.no_grad():
-                for i in range(length_3d):
+            optimizer.zero_grad()
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                # Normalize only encoder inputs; retain raw images for visualization.
+                support_backbone_out = net.sam.forward_image((support_imgs - image_mean) / image_std)
+                _, support_vision_feats, _, _ = net.sam._prepare_backbone_features(support_backbone_out)
+                support_probs = F.interpolate(
+                    support_masks.float(), size=(args.image_size, args.image_size), mode="nearest"
+                )
+                support_logits = torch.logit(support_probs.clamp(1e-6, 1.0 - 1e-6))
+                supportmem_features, supportmem_pos_enc = net.sam._encode_new_memory(
+                    current_vision_feats=support_vision_feats,
+                    feat_sizes=feat_sizes,
+                    pred_masks_high_res=support_logits,
+                    is_mask_from_pts=False,
+                )
+                supportmem_features = supportmem_features.to(torch.bfloat16)
+                supportmem_pos_enc = supportmem_pos_enc[0].to(torch.bfloat16)
+                support_vision_feats_temp = F.normalize(
+                    support_vision_feats[-1].permute(1, 0, 2).reshape(support_imgs.size(0), -1)
+                )
+
+                loss = 0
+                slice_indices = (
+                    range(length_3d - 1, -1, -1)
+                    if getattr(args, 'reverse_propagation', False)
+                    else range(length_3d)
+                )
+                for i in slice_indices:
                     imgs = imgs_input[:, i, ...]
                     masks = masks_input[:, i, ...]
-
-                    '''Train image encoder'''
-                    backbone_out = net.sam.forward_image(imgs)
+                    backbone_out = net.sam.forward_image((imgs - image_mean) / image_std)
                     _, vision_feats, vision_pos_embeds, _ = net.sam._prepare_backbone_features(backbone_out)
-                    # dimension hint for your future use
-                    # vision_feats: list: length = 3
-                    # vision_feats[0]: torch.Size([65536, batch, 32])
-                    # vision_feats[1]: torch.Size([16384, batch, 64])
-                    # vision_feats[2]: torch.Size([4096, batch, 256])
-                    # vision_pos_embeds[0]: torch.Size([65536, batch, 256])
-                    # vision_pos_embeds[1]: torch.Size([16384, batch, 256])
-                    # vision_pos_embeds[2]: torch.Size([4096, batch, 256])
-                    '''Train memory attention to condition on support image'''
-                    B = vision_feats[-1].size(1)  # batch size
-                    # feats[0]: torch.Size([batch, 32, 256, 256]) #high_res_feats part1
-                    # feats[1]: torch.Size([batch, 64, 128, 128]) #high_res_feats part2
-                    # feats[2]: torch.Size([batch, 256, 64, 64]) #image_embed
-                    vision_feats_temp = vision_feats[-1].permute(1, 0, 2).reshape(B, -1, 64, 64).cuda()
-                    vision_feats_temp = F.normalize(vision_feats_temp.reshape(B, -1))
-                    similarity_scores = F.softmax(torch.mm(support_vision_feats_temp, vision_feats_temp.t()).t(),
-                                                  dim=1).cuda()
+                    vision_feats_temp = F.normalize(vision_feats[-1].permute(1, 0, 2).reshape(B, -1))
+                    similarity_scores = F.softmax(
+                        torch.mm(support_vision_feats_temp, vision_feats_temp.t()).t(), dim=1
+                    )
                     support_samples = torch.multinomial(similarity_scores, num_samples=args.support_size)
+                    support_memory = supportmem_features[support_samples].flatten(3).permute(1, 3, 0, 2)
+                    support_memory_pos_enc = supportmem_pos_enc[support_samples].flatten(3).permute(1, 3, 0, 2)
 
-                    '''memory attention on support embeddings and input image feats'''
-                    support_memory = supportmem_features[support_samples].flatten(3).permute(1, 3, 0, 2).cuda(
-                        non_blocking=True)  # [4096, Support_size,batch, 64]
-                    support_memory_pos_enc = supportmem_pos_enc[support_samples].flatten(3).permute(1, 3, 0, 2).cuda(
-                        non_blocking=True)
-                    # memory = memory.reshape(-1, memory.size(2), memory.size(3))  # [4096*Support_size, Batch_size, 64]
-                    # memory_pos_enc = memory_pos_enc.reshape(-1, memory_pos_enc.size(2), memory_pos_enc.size(3))
-
-                    '''memory attention on past frames'''
-                    if len(memory_bank_feats) == 0:
-                        memory = support_memory.reshape(-1, support_memory.size(2),
-                                                        support_memory.size(3))  # [4096*Support_size, Batch_size, 64]
-                        memory_pos_enc = support_memory_pos_enc.reshape(-1, support_memory_pos_enc.size(2),
-                                                                        support_memory_pos_enc.size(3))
-                    else:
-                        L = len(memory_bank_feats)
-                        memory_stack_ori = torch.stack(memory_bank_feats, dim=0)
-                        memory_pos_stack_ori = torch.stack(memory_bank_pos_enc, dim=0)
-                        memory_3d = memory_stack_ori.flatten(3).permute(0, 3, 1, 2)
-                        memory_pos_3d = memory_pos_stack_ori.flatten(3).permute(0, 3, 1, 2)
+                    if memory_bank_feats:
+                        memory_3d = torch.stack(memory_bank_feats, dim=0).flatten(3).permute(0, 3, 1, 2)
+                        memory_pos_3d = torch.stack(memory_bank_pos_enc, dim=0).flatten(3).permute(0, 3, 1, 2)
                         memory = torch.cat([support_memory, memory_3d], dim=0)
                         memory_pos_enc = torch.cat([support_memory_pos_enc, memory_pos_3d], dim=0)
-                        memory = memory.reshape(-1, memory.size(2),
-                                                        memory.size(3))  # [4096*Support_size, Batch_size, 64]
-                        memory_pos_enc = memory_pos_enc.reshape(-1, memory_pos_enc.size(2),
-                                                                        memory_pos_enc.size(3))
-
+                    else:
+                        memory = support_memory
+                        memory_pos_enc = support_memory_pos_enc
+                    memory = memory.reshape(-1, B, memory.size(-1))
+                    memory_pos_enc = memory_pos_enc.reshape(-1, B, memory_pos_enc.size(-1))
                     vision_feats[-1] = net.sam.memory_attention(
                         curr=[vision_feats[-1]],
                         curr_pos=[vision_pos_embeds[-1]],
                         memory=memory,
                         memory_pos=memory_pos_enc,
-                        num_obj_ptr_tokens=0
+                        num_obj_ptr_tokens=0,
                     )
-
-                    feats = [feat.cuda(non_blocking=True).permute(1, 2, 0).view(B, -1, *feat_size)
+                    feats = [feat.permute(1, 2, 0).reshape(B, -1, *feat_size)
                              for feat, feat_size in zip(vision_feats[::-1], feat_sizes[::-1])][::-1]
                     image_embed = feats[-1]
                     high_res_feats = feats[:-1]
-                    # print('image_embed', image_embed.min(), image_embed.max())
-                    # print('high_res', high_res_feats[0].min(), high_res_feats[0].max())
 
-                    with torch.no_grad():
-                        '''infer from cross attentioned feats and zero prompts'''
-                        se, de = net.sam.sam_prompt_encoder(
-                            points=None,  # (coords_torch, labels_torch)
-                            boxes=None,
-                            masks=None,
-                            batch_size=B,
-                        )
-                        y_0 , iou_pred_0, sam_token_out, object_pred_logit,msk_feat, up_embed= net.sam.sam_mask_decoder(
-                            image_embeddings=image_embed,
-                            image_pe=net.sam.sam_prompt_encoder.get_dense_pe(),
-                            sparse_prompt_embeddings=se,
-                            dense_prompt_embeddings=de,
-                            multimask_output=False,  # args.multimask_output if you want multiple masks
-                            repeat_image=False,  # the image is already batched
-                            high_res_features=high_res_feats)
-                        '''generate pseudo mask'''
-                        y_0_pred = F.interpolate(y_0, size=(args.out_size, args.out_size))
-                        '''generate box prompt'''
-                        box_corordinates = generate_box_new((y_0_pred > 0.5).float()).cuda()
-                        se, de = net.sam.sam_prompt_encoder(
-                            points=None,  # (coords_torch, labels_torch)
-                            boxes=box_corordinates,
-                            masks=None,
-                            batch_size=B,
-                        )
-                    # dimension hint for your future use
-                    # se: torch.Size([batch, n+1, 256])
-                    # de: torch.Size([batch, 256, 64, 64])
-
-                    # '''memory attention on past frames'''
-                    # if len(memory_bank_feats) == 0:
-                    #     vision_feats[-1] = vision_feats[-1] + torch.nn.Parameter(
-                    #         torch.zeros(1, B, net.sam.hidden_dim)).to(
-                    #         device="cuda")
-                    #     vision_pos_embeds[-1] = vision_pos_embeds[-1] + torch.nn.Parameter(
-                    #         torch.zeros(1, B, net.sam.hidden_dim)).to(device="cuda")
-                    # else:
-                    #     L = len(memory_bank_feats)
-                    #     memory_stack_ori = torch.stack(memory_bank_feats, dim=0)
-                    #     memory_pos_stack_ori = torch.stack(memory_bank_pos_enc, dim=0)
-                    #     memory = memory_stack_ori.flatten(3).permute(1, 2, 0, 3)
-                    #     # memory = memory.permute(2, 0, 1, 3).reshape(4096*L, B, 64)
-                    #     memory_shape_temp = (highres_size // 4) ** 2
-                    #     memory = memory.permute(2, 0, 1, 3).reshape(memory_shape_temp * L, B, 64)
-                    #     # memory_pos = memory_pos_stack_ori.view(L, B, 4096, 64)
-                    #     memory_pos = memory_pos_stack_ori.flatten(3).permute(1, 2, 0, 3)
-                    #     # memory_pos = memory_pos.permute(2, 0, 1, 3).reshape(4096*L, B, 64)
-                    #     memory_pos = memory_pos.permute(2, 0, 1, 3).reshape(memory_shape_temp * L, B, 64)
-                    #     vision_feats[-1] = net.sam.memory_attention(
-                    #         curr=[vision_feats[-1]],
-                    #         curr_pos=[vision_pos_embeds[-1]],
-                    #         memory=memory,
-                    #         memory_pos=memory_pos,
-                    #         num_obj_ptr_tokens=0
-                    #     )
-
-                    # feats = [feat.cuda(non_blocking=True).permute(1, 2, 0).view(B, -1, *feat_size)
-                    #          for feat, feat_size in zip(vision_feats[::-1], feat_sizes[::-1])][::-1]
-                    # image_embed = feats[-1]
-                    # high_res_feats = feats[:-1]
-
-                    '''train mask decoder'''
-                    # low_res_multimasks, iou_predictions, sam_output_tokens, object_score_logits = net.sam.sam_mask_decoder(
-                    #     image_embeddings=image_embed,
-                    #     image_pe=net.sam.sam_prompt_encoder.get_dense_pe(),
-                    #     sparse_prompt_embeddings=se,
-                    #     dense_prompt_embeddings=de,
-                    #     multimask_output=False,  # args.multimask_output if you want multiple masks
-                    #     repeat_image=False,  # the image is already batched
-                    #     high_res_features=high_res_feats
-                    # )
-
-                    low_res_masks2, iou_predictions2, attn1 = net.sam.mask_decoder2(
+                    # Both passes use the original SAM2 decoder.
+                    se, de = net.sam.sam_prompt_encoder(points=None, boxes=None, masks=None, batch_size=B)
+                    coarse_low_res = net.sam.sam_mask_decoder(
                         image_embeddings=image_embed,
                         image_pe=net.sam.sam_prompt_encoder.get_dense_pe(),
                         sparse_prompt_embeddings=se,
                         dense_prompt_embeddings=de,
                         multimask_output=False,
-                        mask_feat=F.interpolate((y_0 > 0.5).float(), size=(64, 64), mode='bilinear'),
-                        msk_feat=msk_feat,
-                        up_embed=up_embed
+                        repeat_image=False,
+                        high_res_features=high_res_feats,
+                    )[0]
+                    coarse_logits = F.interpolate(coarse_low_res, size=(args.out_size, args.out_size))
+                    box_coordinates = generate_box_new((coarse_logits.detach() > 0.0).float()).to(GPUdevice)
+                    se, de = net.sam.sam_prompt_encoder(points=None, boxes=box_coordinates, masks=None, batch_size=B)
+                    final_low_res = net.sam.sam_mask_decoder(
+                        image_embeddings=image_embed,
+                        image_pe=net.sam.sam_prompt_encoder.get_dense_pe(),
+                        sparse_prompt_embeddings=se,
+                        dense_prompt_embeddings=de,
+                        multimask_output=False,
+                        repeat_image=False,
+                        high_res_features=high_res_feats,
+                    )[0]
+                    final_logits = F.interpolate(final_low_res, size=(args.out_size, args.out_size))
+                    # Predicted memory input is already logits, not thresholded probabilities.
+                    high_res_logits = F.interpolate(
+                        final_low_res, size=(args.image_size, args.image_size), mode="bilinear", align_corners=False
                     )
 
-
-                    # prediction
-                    # pred = F.interpolate(low_res_multimasks, size=(args.out_size, args.out_size))
-                    pred = F.interpolate(low_res_masks2[:, :1, :, :], size=(args.out_size, args.out_size))
-                    # high_res_multimasks = F.interpolate(low_res_multimasks, size=(args.image_size, args.image_size),
-                    #                                 mode="bilinear", align_corners=False)
-                    high_res_multimasks = F.interpolate(low_res_masks2[:, :1, :, :],
-                                                        size=(args.image_size, args.image_size),
-                                                        mode="bilinear", align_corners=False)
-
-                    # binary mask and calculate loss, iou, dice
-                    total_loss += lossfunc(pred, masks)
-                    pred = (pred > 0.5).float()
-                    temp = eval_seg(pred, masks, threshold)
-                    total_eiou += temp[0]
-                    total_dice += temp[1]
-                    flag = flag + 1
-
-                    '''encode new mask and features to memory'''
-                    maskmem_features_3d, maskmem_pos_enc_3d = net.sam._encode_new_memory(
+                    loss_slice = (
+                        alpha * lossfunc(coarse_logits.float(), masks)
+                        + (1.0 - alpha) * lossfunc(final_logits.float(), masks)
+                    )
+                    loss = loss + loss_slice
+                    maskmem_features, maskmem_pos_enc = net.sam._encode_new_memory(
                         current_vision_feats=vision_feats,
                         feat_sizes=feat_sizes,
-                        pred_masks_high_res=high_res_multimasks,
-                        is_mask_from_pts=False)
-                    # dimension hint for your future use
-                    # maskmem_features: torch.Size([batch, 64, 64, 64])
-                    # maskmem_pos_enc: [torch.Size([batch, 64, 64, 64])]
-
-                    maskmem_features_3d = maskmem_features_3d.to(torch.bfloat16)
-                    maskmem_pos_enc_3d = maskmem_pos_enc_3d[0].to(torch.bfloat16)
-                    ''' store it in memory bank'''
-                    if len(memory_bank_feats) < args.memory_bank_size:
-                        memory_bank_feats.append(maskmem_features_3d)
-                        memory_bank_pos_enc.append(maskmem_pos_enc_3d)
-                    else:
+                        pred_masks_high_res=high_res_logits,
+                        is_mask_from_pts=False,
+                    )
+                    # Keep temporal gradients during training; validation runs under no_grad.
+                    if len(memory_bank_feats) == args.memory_bank_size:
                         memory_bank_feats.pop(0)
                         memory_bank_pos_enc.pop(0)
-                        memory_bank_feats.append(maskmem_features_3d)
-                        memory_bank_pos_enc.append(maskmem_pos_enc_3d)
+                    memory_bank_feats.append(maskmem_features.to(torch.bfloat16))
+                    memory_bank_pos_enc.append(maskmem_pos_enc[0].to(torch.bfloat16))
 
-                    '''vis images'''
-                    if ((ind+1) % args.vis == 0) & ((i+1) % args.vis == 0):
-                        namecat = 'Test'
-                        for na in name:
-                            img_name = na
-                            namecat = namecat + img_name + '+slice' + str(i)
-                        vis_image(imgs, pred, masks,
-                                os.path.join(args.path_helper['sample_path'], namecat + 'epoch+' + str(epoch) + '.jpg'),
-                                reverse=False, points=None)
+                loss = loss / length_3d
 
+            loss.backward()
+            optimizer.step()
+            epoch_loss += loss.item() * B
+            n_volumes += B
+            pbar.set_postfix(**{'loss (batch)': loss.item()})
             pbar.update()
 
-    n_val = n_val * length_3d
-    print(length_3d, flag, n_val)
-    return total_loss / flag, tuple([total_eiou / flag, total_dice / flag])
+    return epoch_loss / n_volumes
 
+
+def validation_sam(args, val_loader, support_loader, epoch, net: nn.Module,
+                   clean_dir=True, export_dir=None):
+    if torch.cuda.get_device_properties(args.gpu_device).major >= 8:
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+
+    GPUdevice = torch.device('cuda', args.gpu_device)
+    net.sam.sam_mask_decoder.dynamic_multimask_via_stability = False
+    highres_size = args.image_size // 4
+    feat_sizes = [(highres_size // (2 ** k), highres_size // (2 ** k)) for k in range(3)]
+    image_mean = torch.tensor(
+        [0.485, 0.456, 0.406], device=GPUdevice, dtype=torch.float32
+    ).view(1, 3, 1, 1)
+    image_std = torch.tensor(
+        [0.229, 0.224, 0.225], device=GPUdevice, dtype=torch.float32
+    ).view(1, 3, 1, 1)
+    pos_weight = torch.tensor([2.0], device=GPUdevice)
+    net.eval()
+    lossfunc = nn.BCEWithLogitsLoss(pos_weight=pos_weight, reduction='none')
+    total_loss = 0.0
+    total_eiou = 0.0
+    total_dice = 0.0
+    total_hd95 = 0.0
+    hd95_included = 0
+    hd95_excluded = 0
+    n_volumes = 0
+    if export_dir is not None:
+        os.makedirs(export_dir, exist_ok=True)
+
+    with tqdm(total=len(val_loader), desc='Validation round', unit='batch', leave=False) as pbar:
+        for ind, pack in enumerate(val_loader):
+            imgs_input = pack['image'].to(dtype=torch.float32, device=GPUdevice)
+            masks_input = pack['mask'].to(dtype=torch.float32, device=GPUdevice)
+            B, length_3d = imgs_input.shape[:2]
+            support_data = next(iter(support_loader))
+            support_imgs = support_data['image'].flatten(0, 1).to(dtype=torch.float32, device=GPUdevice)
+            support_masks = support_data['mask'].flatten(0, 1).to(dtype=torch.float32, device=GPUdevice)
+            memory_bank_feats = []
+            memory_bank_pos_enc = []
+            name = pack['image_meta_dict']['filename_or_obj']
+            intersection = torch.zeros(B, dtype=torch.int64, device=GPUdevice)
+            predicted_count = torch.zeros_like(intersection)
+            target_count = torch.zeros_like(intersection)
+            volume_loss = torch.zeros(B, dtype=torch.float64, device=GPUdevice)
+            volume_predictions = [None] * length_3d
+
+            with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                # Normalize only encoder inputs; retain raw images for visualization.
+                support_backbone_out = net.sam.forward_image((support_imgs - image_mean) / image_std)
+                _, support_vision_feats, _, _ = net.sam._prepare_backbone_features(support_backbone_out)
+                support_probs = F.interpolate(
+                    support_masks.float(), size=(args.image_size, args.image_size), mode="nearest"
+                )
+                support_logits = torch.logit(support_probs.clamp(1e-6, 1.0 - 1e-6))
+                supportmem_features, supportmem_pos_enc = net.sam._encode_new_memory(
+                    current_vision_feats=support_vision_feats,
+                    feat_sizes=feat_sizes,
+                    pred_masks_high_res=support_logits,
+                    is_mask_from_pts=False,
+                )
+                supportmem_features = supportmem_features.to(torch.bfloat16)
+                supportmem_pos_enc = supportmem_pos_enc[0].to(torch.bfloat16)
+                support_vision_feats_temp = F.normalize(
+                    support_vision_feats[-1].permute(1, 0, 2).reshape(support_imgs.size(0), -1)
+                )
+
+                slice_indices = (
+                    range(length_3d - 1, -1, -1)
+                    if getattr(args, 'reverse_propagation', False)
+                    else range(length_3d)
+                )
+                for i in slice_indices:
+                    imgs = imgs_input[:, i, ...]
+                    masks = masks_input[:, i, ...]
+                    backbone_out = net.sam.forward_image((imgs - image_mean) / image_std)
+                    _, vision_feats, vision_pos_embeds, _ = net.sam._prepare_backbone_features(backbone_out)
+                    vision_feats_temp = F.normalize(vision_feats[-1].permute(1, 0, 2).reshape(B, -1))
+                    similarity_scores = F.softmax(
+                        torch.mm(support_vision_feats_temp, vision_feats_temp.t()).t(), dim=1
+                    )
+                    support_samples = torch.multinomial(similarity_scores, num_samples=args.support_size)
+                    support_memory = supportmem_features[support_samples].flatten(3).permute(1, 3, 0, 2)
+                    support_memory_pos_enc = supportmem_pos_enc[support_samples].flatten(3).permute(1, 3, 0, 2)
+
+                    if memory_bank_feats:
+                        memory_3d = torch.stack(memory_bank_feats, dim=0).flatten(3).permute(0, 3, 1, 2)
+                        memory_pos_3d = torch.stack(memory_bank_pos_enc, dim=0).flatten(3).permute(0, 3, 1, 2)
+                        memory = torch.cat([support_memory, memory_3d], dim=0)
+                        memory_pos_enc = torch.cat([support_memory_pos_enc, memory_pos_3d], dim=0)
+                    else:
+                        memory = support_memory
+                        memory_pos_enc = support_memory_pos_enc
+                    memory = memory.reshape(-1, B, memory.size(-1))
+                    memory_pos_enc = memory_pos_enc.reshape(-1, B, memory_pos_enc.size(-1))
+                    vision_feats[-1] = net.sam.memory_attention(
+                        curr=[vision_feats[-1]],
+                        curr_pos=[vision_pos_embeds[-1]],
+                        memory=memory,
+                        memory_pos=memory_pos_enc,
+                        num_obj_ptr_tokens=0,
+                    )
+                    feats = [feat.permute(1, 2, 0).reshape(B, -1, *feat_size)
+                             for feat, feat_size in zip(vision_feats[::-1], feat_sizes[::-1])][::-1]
+                    image_embed = feats[-1]
+                    high_res_feats = feats[:-1]
+
+                    # Both passes use the original SAM2 decoder.
+                    se, de = net.sam.sam_prompt_encoder(points=None, boxes=None, masks=None, batch_size=B)
+                    coarse_low_res = net.sam.sam_mask_decoder(
+                        image_embeddings=image_embed,
+                        image_pe=net.sam.sam_prompt_encoder.get_dense_pe(),
+                        sparse_prompt_embeddings=se,
+                        dense_prompt_embeddings=de,
+                        multimask_output=False,
+                        repeat_image=False,
+                        high_res_features=high_res_feats,
+                    )[0]
+                    coarse_logits = F.interpolate(coarse_low_res, size=(args.out_size, args.out_size))
+                    box_coordinates = generate_box_new((coarse_logits.detach() > 0.0).float()).to(GPUdevice)
+                    se, de = net.sam.sam_prompt_encoder(points=None, boxes=box_coordinates, masks=None, batch_size=B)
+                    final_low_res = net.sam.sam_mask_decoder(
+                        image_embeddings=image_embed,
+                        image_pe=net.sam.sam_prompt_encoder.get_dense_pe(),
+                        sparse_prompt_embeddings=se,
+                        dense_prompt_embeddings=de,
+                        multimask_output=False,
+                        repeat_image=False,
+                        high_res_features=high_res_feats,
+                    )[0]
+                    final_logits = F.interpolate(final_low_res, size=(args.out_size, args.out_size))
+                    # Predicted memory input is already logits, not thresholded probabilities.
+                    high_res_logits = F.interpolate(
+                        final_low_res, size=(args.image_size, args.image_size), mode="bilinear", align_corners=False
+                    )
+
+                    volume_loss += lossfunc(final_logits.float(), masks).flatten(1).mean(1)
+                    binary_pred = final_logits > 0.0
+                    binary_target = masks >= 0.5
+                    intersection += (binary_pred & binary_target).flatten(1).sum(1)
+                    predicted_count += binary_pred.flatten(1).sum(1)
+                    target_count += binary_target.flatten(1).sum(1)
+                    volume_predictions[i] = binary_pred.detach().cpu()
+                    maskmem_features, maskmem_pos_enc = net.sam._encode_new_memory(
+                        current_vision_feats=vision_feats,
+                        feat_sizes=feat_sizes,
+                        pred_masks_high_res=high_res_logits,
+                        is_mask_from_pts=False,
+                    )
+                    # Keep temporal gradients during training; validation runs under no_grad.
+                    if len(memory_bank_feats) == args.memory_bank_size:
+                        memory_bank_feats.pop(0)
+                        memory_bank_pos_enc.pop(0)
+                    memory_bank_feats.append(maskmem_features.to(torch.bfloat16))
+                    memory_bank_pos_enc.append(maskmem_pos_enc[0].to(torch.bfloat16))
+
+                    if ((ind + 1) % args.vis == 0) and ((i + 1) % args.vis == 0):
+                        namecat = 'Test'
+                        for na in name:
+                            namecat += na + '+slice' + str(i)
+                        vis_image(
+                            imgs, binary_pred.float(), masks,
+                            os.path.join(args.path_helper['sample_path'], namecat + 'epoch+' + str(epoch) + '.jpg'),
+                            reverse=False, points=None,
+                        )
+
+            intersection = intersection.double()
+            predicted_count = predicted_count.double()
+            target_count = target_count.double()
+            volume_iou = (intersection + 1e-6) / (predicted_count + target_count - intersection + 1e-6)
+            volume_dice = (2 * intersection + 1e-4) / (predicted_count + target_count + 1e-4)
+            total_loss += (volume_loss / length_3d).sum().item()
+            total_eiou += volume_iou.sum().item()
+            total_dice += volume_dice.sum().item()
+            n_volumes += B
+
+            predictions = torch.stack(volume_predictions, dim=1)
+            del volume_predictions
+            for batch_index in range(B):
+                prediction = predictions[batch_index, :, 0].unsqueeze(0).unsqueeze(0)
+                target = (pack['mask'][batch_index, :, 0].detach().cpu() >= 0.5).unsqueeze(0).unsqueeze(0)
+                pred_present = prediction.any().item()
+                target_present = target.any().item()
+                if pred_present and target_present:
+                    hd95 = compute_hausdorff_distance(
+                        prediction, target, include_background=True,
+                        distance_metric="euclidean", percentile=95,
+                        directed=False, spacing=1.0,
+                    ).item()
+                elif not pred_present and not target_present:
+                    hd95 = 0.0
+                else:
+                    hd95 = float('nan')
+                if math.isfinite(hd95):
+                    total_hd95 += hd95
+                    hd95_included += 1
+                else:
+                    hd95_excluded += 1
+                del prediction, target
+
+            if export_dir is not None:
+                for batch_index in range(B):
+                    case_id = os.path.basename(str(name[batch_index]))
+                    prefix = f'{case_id}_{args.task}_epoch{epoch}_grid1024'
+                    prediction = predictions[batch_index, :, 0].permute(1, 2, 0).numpy().astype(np.uint8)
+                    reference = (masks_input[batch_index, :, 0] >= 0.5).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
+                    for suffix, volume in (('prediction', prediction), ('reference', reference)):
+                        nii = nib.Nifti1Image(volume, affine=np.eye(4))
+                        nii.header['descrip'] = 'Preprocessed 1024 grid; original scan geometry unavailable'
+                        nib.save(nii, os.path.join(export_dir, prefix + '_' + suffix + '.nii.gz'))
+            del predictions
+            pbar.update()
+
+    mean_hd95 = total_hd95 / hd95_included if hd95_included else float('nan')
+    logging.getLogger().info(
+        f'HD95 (3D, evaluation-grid units, finite mean): {mean_hd95:.4f} | '
+        f'included: {hd95_included}/{n_volumes} | excluded: {hd95_excluded}/{n_volumes} | epoch: {epoch}'
+    )
+    return total_loss / n_volumes, (total_eiou / n_volumes, total_dice / n_volumes)

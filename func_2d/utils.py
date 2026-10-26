@@ -48,7 +48,6 @@ def get_network(args, net, use_gpu=True, gpu_device = 0, distribution = True):
     if net == 'sam2':
         from sam2_train.build_sam import build_sam2
         from sam2_train.sam2_image_predictor import SAM2ImagePredictor
-        torch.autocast(device_type="cuda", dtype=torch.bfloat16).__enter__()
         if torch.cuda.get_device_properties(0).major >= 8:
             # turn on tfloat32 for Ampere GPUs (https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices)
             torch.backends.cuda.matmul.allow_tf32 = True
@@ -184,7 +183,7 @@ def create_logger(log_dir, phase='train'):
     final_log_file = os.path.join(log_dir, log_file)
     head = '%(asctime)-15s %(message)s'
     logging.basicConfig(filename=str(final_log_file),
-                        format=head)
+                        format=head, force=True)
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     console = logging.StreamHandler()

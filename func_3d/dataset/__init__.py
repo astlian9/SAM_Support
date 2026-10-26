@@ -48,7 +48,7 @@ def get_dataloader(args):
                                  prompt=args.prompt)
         dataset_size = len(amos_train_dataset)
         indices = list(range(dataset_size))
-        split_support = 1
+        split_support = 2
         test_dataset_size = len(amos_test_dataset)
         indices_test = list(range(test_dataset_size))
         split_val = int(np.floor(0.5 * test_dataset_size))
@@ -58,7 +58,7 @@ def get_dataloader(args):
         support_sampler = SubsetRandomSampler(indices[:split_support])
         val_sampler = SubsetRandomSampler(indices_test[split_val:])
         test_sampler = SubsetRandomSampler(indices_test[:split_val])
-        nice_support_loader = DataLoader(amos_train_dataset, batch_size=1, sampler=support_sampler,
+        nice_support_loader = DataLoader(amos_train_dataset, batch_size=2, sampler=support_sampler,
                                          pin_memory=False)
         nice_train_loader = DataLoader(amos_train_dataset, batch_size=args.b, sampler=train_sampler,
                                        pin_memory=False)
